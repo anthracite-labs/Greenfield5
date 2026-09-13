@@ -182,3 +182,81 @@ platform screen-capture APIs, media/WebRTC layer, Local/Direct/Internet
 transport design, discovery/pairing, signalling, STUN/TURN, minimal backend,
 and security boundaries; record durable choices as ADRs before enabling the
 application stack.
+
+## 2026-09-13 — Greenfield5 open-source architecture research pass
+
+**Context:** Issue #7, branch `arena/01a09bf4-greenfield5`.
+**Did:** Researched ~40 open-source candidates via `gh api` (primary) and web
+search (secondary); wrote the durable record
+`docs/research/open-source-landscape.md` (candidate matrix + harvest verdicts,
+10-area capability coverage, ranked reusable findings with source paths, gaps,
+architecture implications, 6 product-owner decisions). No architecture chosen,
+no ADR, no app code, no lifecycle change.
+**Verified:** `bash scripts/verify.sh` → exit 0 (full gate, this session);
+`gh api` rate limit started 5000/5000. Headline verdicts: LiveKit EXTEND
+(Internet), coturn/eturnal ADOPT (relay), scrcpy/ScreenStream/LocalSend/KDE/
+wormhole HARVEST PATTERN, RustDesk/Briar/mesh-VPNs REJECT with reasons.
+**Learned:** (1) No OSS app covers Greenfield5 end-to-end — closest fail iOS
+sender (RustDesk, vendor-confirmed) or are Android-only (ScreenStream,
+LocalScreenShare, whose MIT badge has no LICENSE file). (2) iOS BUE budget
+(50 MB kill limit, 450x800@10 VP8 / 1068x600@15 H264) is primary-verified from
+`opentok/opentok-ios-sdk-samples`. (3) Mixed-platform offline Direct video has
+no credible solution — `google/nearby` OSS core is Wi-Fi-LAN-only on iOS
+(verbatim README) — so Direct needs a hotspot-anchored prototype. (4) eturnal
+lives at `processone/eturnal` (`eturnal/eturnal` 404s); canonical UxPlay is
+`FDH2/UxPlay`; `restund/restund` 404s. (5) `write_file` silently truncated a
+large doc mid-sentence — always check the tail (`tail`, line count) after
+writing big files.
+**Dead ends:** HopToDesk not inspected (RustDesk fork adds no new evidence);
+restund not pursued (relay coverage complete via coturn/eturnal/pion).
+**Next:** Product owner answers the 6 decisions in the research doc (starting
+with the "native app" reading); then the stack ADR session. First prototype
+candidate: hotspot-anchored LAN for mixed-platform Direct.
+
+## 2026-09-13 — PR #8 research corrections (review findings)
+
+**Context:** Issue #7, PR #8, branch `arena/01a09bf4-greenfield5`.
+**Did:** Independently verified all 5 independent-review findings against
+primary sources and corrected `docs/research/open-source-landscape.md`
+(+385/−109): Wi-Fi Aware Direct fact base (UNKNOWN/REQUIRES PROTOTYPE,
+prototype-first, hotspot as fallback); neutral 12-dimension P2P-vs-SFU
+Internet comparison (LiveKit confirmed SFU-routed via vendor docs +
+`p2p` code search = 0); three-way 50 MB memory wording; AirPlay demoted
+from PO option to prototype-reference-only; engineering-safe licensing
+language throughout. Material new finding: RPBroadcast* deprecated in
+the iOS 27 SDK with ScreenCaptureKit (iOS 27+) as successor — BUE stays
+valid for the iOS 16–26 window plus a migration track.
+**Verified:** `bash scripts/verify.sh` → exit 0; `bash scripts/selftest.sh`
+→ exit 0 (128/128); CI on the new head (see PR). Review scorecard: all 5
+findings confirmed (Direct, LiveKit promotion, 50 MB wording, AirPlay
+framing, licensing tone — AirPlay/licensing as framing fixes); 1 reviewer
+aside rejected (Multipeer "deprecated" — framework page current, no
+banner; immaterial since Apple-only either way).
+**Learned:** `fetch_page` reaches Apple/Android/LiveKit docs that sandbox
+egress blocks — official platform docs are fetchable primary sources.
+Android 17 = API 37 (Android Developers Blog); Android 17 blocks local
+network by default for SDK 37+ (`ACCESS_LOCAL_NETWORK`) — flagged for
+Local mode. Apple Wi-Fi Aware mandates paired-device connections;
+Android documents only Open/PSK datapaths with no NAN-pairing API found —
+that asymmetry is the interop crux. `livekit/livekit-docs` is the docs
+repo name (`livekit/docs` 404s).
+**Dead ends:** None new; `restund/restund` still not pursued.
+**Next:** Leave PR #8 open for re-review. Then PO answers (revised Q3/Q6)
+and the stack ADR; first prototype is now the Wi-Fi Aware interop spike.
+
+## 2026-09-13 — PR #8 cleanup: P2P wording + PR body refresh
+
+**Context:** Issue #7, PR #8, branch `arena/01a09bf4-greenfield5`.
+**Did:** Applied the re-review's two cleanup items only: fixed the P2P
+topology definition ("a WebRTC PeerConnection", bidirectional — no
+conclusion change) and refreshed the PR #8 body to the corrected head
+(1018 lines, Wi-Fi Aware first prototype, P2P vs SFU candidates, CI
+green). No research, no other doc changes.
+**Verified:** `bash scripts/verify.sh` → exit 0; `bash scripts/selftest.sh`
+→ exit 0 (128/128); CI green on the new head (see PR).
+**Learned:** `gh pr edit --body/--body-file` can exit 0 without
+persisting (observed twice, GraphQL projects warning only); REST
+`PATCH /repos/{o}/{r}/pulls/{n}` with a JSON body applied the same
+update successfully. Always re-read the PR body after editing it.
+**Next:** PR #8 awaits independent re-review; no further work planned
+on this branch unless the reviewer asks.
