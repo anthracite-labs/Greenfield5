@@ -105,3 +105,27 @@ before relying on **Use this template**, and separately decide whether to apply
 the portable Main ruleset to App-Factory itself. Generated repositories must
 still receive their own live governance because GitHub administrative settings
 are not inherited.
+
+## 2026-09-13 — Greenfield5 initialized for discovery (issue #1, branch `arena/issue-1-initialize-greenfield5`, PR #2)
+
+**Done:** Initialized `config/project.env` with `PROJECT_NAME=Greenfield5`,
+`PROJECT_SLUG=greenfield5`, and `PROJECT_PHASE=discovery`, while preserving
+`ALLOW_APP_STACK=0` and an empty `STACK_DECISION_ADR`. Verified the live
+`main-protection` ruleset before changing lifecycle state.
+**Verified:** GitHub Actions run `34766735046` on commit
+`007f7221d4ba0a3d1b90e9e2a5f0ffb26ccc81cb` reported `Independent checks = success`
+and `Foundation gate = success`; inside `Foundation gate`, both `Run the
+verification gate` (`bash scripts/verify.sh`) and `Run the negative tests`
+(`bash scripts/selftest.sh`) completed successfully. Live ruleset `23185024`
+was active on the default branch with no bypass actors and contained deletion,
+non-fast-forward, pull-request, and strict required-status-check rules.
+**Learned:** The connected GitHub path can create branches/PRs and inspect
+Actions even when the local shell cannot resolve `github.com`. CI is therefore
+the observed execution evidence for this session, not a claimed local run.
+**Dead ends:** A local `git clone` attempt failed with `Could not resolve host:
+github.com`, so `init-project.sh`, `verify.sh`, AgentShield, and `selftest.sh`
+could not be executed in the local shell before the first commit.
+**Next:** Verify the new PR head after this memory commit, then leave PR #2 open
+for independent review. After merge, begin product discovery from `docs/PRODUCT.md`
+in a separate issue; do not introduce an application stack before the later
+architecture/ADR transition.
