@@ -268,3 +268,68 @@ on this branch unless the reviewer asks.
 **Verified:** Repository-source verification for the decision used `n0-computer/iroh`, `n0-computer/iroh-ffi`, `moq-dev/moq` including `rs/moq-native/src/iroh.rs`, and `n0-computer/iroh-live`. CI/`scripts/verify.sh` evidence is not yet claimed for this branch; the PR must supply the authoritative gate result on the exact head.
 **Learned:** Upstream MoQ already carries an experimental Iroh transport, and `iroh-live` proves real-time A/V over the combined stack with an Android Kotlin+Rust demo. That evidence is sufficient to choose the architecture direction but not to skip prototype gates: iOS Broadcast Extension process/memory behavior, strict-offline Local configuration, dedicated Internet relay fallback, and Android↔iOS Wi-Fi Aware Direct remain to be proven.
 **Next:** Open Issue #9's PR, verify CI on the exact head, leave it for independent review, then continue the architecture interview/prototype sequencing. Do not transition to implementation or populate `STACK_DECISION_ADR` yet.
+
+## 2026-09-13 — Issue #11 Spike 1: MoQ-over-Iroh mobile architecture report (no execution possible)
+
+**Context:** Issue #11, branch `arena/01a09c70-greenfield5` (the session branch;
+Issue #11 asks for `arena/issue-11-moq-iroh-mobile-spike`, which this session
+cannot create — recorded as a deviation in the report §1.4).
+**Did:** Fetched all four preflight pins plus the `Frando/moq@iroh-live-3`
+baseline at depth 1, harvested the upstream implementation path, and wrote
+`docs/research/moq-iroh-mobile-spike-1.md`. No executable code was added to
+Greenfield5; `config/project.env` is untouched.
+**Verified:** `git fetch --depth 1` + `rev-parse` matched all pins
+(`iroh-live de7f43bf`, `iroh-ffi 3103bf52`, `moq-dev/moq df79bf0e`,
+`iroh ec04e273`, `Frando/moq 253441fd`). Release tags resolved:
+`moq-native-v0.19.17` → `535d6e4`, `moq-net-v0.2.20` → `cf52dad`,
+`moq-video-v0.0.23` → `535d6e4` (monorepo release commit). **`rs/moq-native/src/
+iroh.rs` is byte-identical between the released 0.19.17 tag and the patch branch,
+and `rs/moq-net` is byte-identical between its release tag and the branch**, so
+the seven `iroh-live-3` commits touch only `moq-mux` fMP4 export (6) and
+`moq-video` surface conversion (1) — i.e. released crates are plausibly
+sufficient for a CPU-frame spike with no `[patch.crates-io]` block (INFERRED,
+needs a real `cargo build`). The adjacent trap: released `moq-video` 0.0.23
+only has the consuming `Surface::into_rgba`/`into_i420`; the borrowing
+`to_rgba`/`to_bgra` forms are patch-only, and **no harvested call site uses
+them** (grep = 0), so adapt call sites rather than adopt the patch. `gh api` shows `iroh-ffi` v1.1.0 shipping
+`IrohLib.xcframework.zip` (iOS 17.5 min), and `grep -rin moq` over its sources
+returns **nothing** — the Iroh FFI exposes no MoQ surface.
+**Learned:** (1) This sandbox cannot build anything:
+`static.rust-lang.org`, `crates.io`/`index.crates.io`, `dl.google.com`,
+`services.gradle.org`, `repo1.maven.org`, `deb.debian.org` and every Rust mirror
+probed return `000`; only `github.com`, `api.github.com`, `pypi.org`,
+`files.pythonhosted.org`, `registry.npmjs.org` are reachable. PyPI's `rustup`
+wheel is rustup-init only (it would still fetch toolchains from the blocked
+dist server) and PyPI's `cargo` is an unrelated Python library, so **no
+toolchain can be imported**; and with no crates.io there is no offline
+dependency resolution either (no `vendor/` tree at any pin). No JDK/SDK/NDK and
+no macOS/Xcode, so no Android or iOS build either — criteria 1–9 are all
+UNVERIFIED. (2) The iOS half of the harvest is macOS-gated in the pinned MoQ
+crates: VideoToolbox encode/decode, `Surface::PixelBuffer`,
+`Surface::into_pixel_buffer` and the wgpu `metal` renderer are all
+`#[cfg(target_os = "macos")]`; `grep 'target_os = "ios"'` finds no hits in
+`moq-video`/`moq-media`/`iroh-live`. iOS can still work for this spike through
+the unconditional CPU path (`Surface::to_rgba`/`into_i420` + openh264, which is
+compiled everywhere), and `openh264` on `aarch64-apple-ios` is UNKNOWN until
+someone runs `cargo check --target aarch64-apple-ios`. (3) Relay forcing is a
+supported, public switch at the iroh pin: `EndpointBuilder::clear_ip_transports()`
+(`iroh/src/endpoint.rs:510`); the `RelayOnly` mode mentioned in `socket.rs`
+docs has no public accessor. (4) `moq_media::test_source::video` already emits a
+per-frame-advancing gradient, and `iroh-live/src/util.rs` already computes
+`path_type = "relayed"/"direct"` from the selected path, so direct-vs-relay
+evidence is a JSON serialization rather than new machinery. (5) A LAN trap:
+`LiveTicket` carries no socket addresses, pkarr needs Internet, and Android
+needs a `WifiManager.MulticastLock` for mDNS (upstream's demo does not take
+one) — spike LAN rows must dial explicit `EndpointAddr` addresses. (6)
+`fast-apple-datapath` (enabled by `iroh-live`) uses private Apple APIs; App
+Store impact is UNKNOWN and is a later decision.
+**Next:** Authorization is needed for the executable home (a fork of
+`n0-computer/iroh-live` or a new scratch repo in `anthracite-labs`) — repository
+creation is administration and was deliberately not done. Then Spike 1A:
+compile-only CI (`cargo ndk` for `aarch64-linux-android` on `ubuntu-latest`;
+`cargo check --target aarch64-apple-ios` on `macos-latest`), which needs no
+devices and answers both the released-crates question and the iOS `openh264`
+question. Spike 1B is the physical run (R1 direct Android→iOS, R5 60 s soak, R4
+forced relay via `clear_ip_transports`, then R2/R3/R6) and requires a Mac,
+one Android device and one iPhone. Do not start screen capture, pairing,
+Wi-Fi Aware or any lifecycle transition.
