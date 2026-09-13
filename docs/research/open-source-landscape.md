@@ -689,9 +689,10 @@ reliability figures from secondary comparisons are marked as such and are
 
 Path definitions (what the words mean in this section):
 
-- *Direct media path:* one WebRTC PeerConnection per direction between the
-  two phones (ICE host/srflx candidates); encoded media flows phone to
-  phone with no server touching it.
+- *Direct media path:* a WebRTC PeerConnection between the two phones (ICE
+  host/srflx candidates; one bidirectional connection carries media in
+  both directions); encoded media flows phone to phone with no server
+  touching it.
 - *TURN-relayed media path:* the same peer-to-peer PeerConnection, but ICE
   nominates a TURN allocation (e.g. self-hosted coturn) because no direct
   candidate pair works. The relay forwards encrypted packets without
