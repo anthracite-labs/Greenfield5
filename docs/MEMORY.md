@@ -160,3 +160,25 @@ as user-selected modes.
 contract is merged, move to `PROJECT_PHASE=architecture` in a separate reviewed
 change and research/record the implementation stack via ADR before allowing app
 source code.
+
+## 2026-09-13 — Greenfield5 entered architecture review
+
+**Context:** Issue #5, branch `arena/issue-5-architecture-transition`.
+**Did:** Changed only the lifecycle phase from `discovery` to `architecture` in
+`config/project.env`. `ALLOW_APP_STACK=0` remains enforced and
+`STACK_DECISION_ADR` remains empty, so no application implementation is yet
+authorized. No framework, media stack, backend, database, hosting target, or
+application source was introduced.
+**Verified:** The branch file state was re-read through the connected GitHub
+path before PR preparation. Execution evidence from `bash scripts/verify.sh`,
+`bash scripts/selftest.sh`, and AgentShield is intentionally not claimed here
+until GitHub Actions runs on the exact PR head.
+**Learned:** The product contract is now merged, so the smallest valid next
+lifecycle move is architecture only; implementation remains separately gated by
+an accepted application-stack ADR and the later implementation transition.
+**Next:** After Issue #5 is independently reviewed and merged, open a dedicated
+architecture research issue. Research and compare the mobile framework,
+platform screen-capture APIs, media/WebRTC layer, Local/Direct/Internet
+transport design, discovery/pairing, signalling, STUN/TURN, minimal backend,
+and security boundaries; record durable choices as ADRs before enabling the
+application stack.
