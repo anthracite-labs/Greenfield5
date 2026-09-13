@@ -260,3 +260,11 @@ persisting (observed twice, GraphQL projects warning only); REST
 update successfully. Always re-read the PR body after editing it.
 **Next:** PR #8 awaits independent re-review; no further work planned
 on this branch unless the reviewer asks.
+
+## 2026-09-13 — Rust/native + MoQ/Iroh architecture locked
+
+**Context:** Issue #9, branch `arena/issue-9-moq-iroh-architecture`.
+**Did:** Recorded accepted ADR-0005 selecting a shared Rust core, Kotlin + Jetpack Compose on Android, Swift + SwiftUI on iOS, MoQ for live media/object transport, and Iroh for native QUIC/P2P connectivity with direct-first Internet operation and dedicated encrypted relay fallback. Native screen capture, permissions, lifecycle, hardware-media, LAN, and Wi-Fi Aware integration remain platform-owned. `moq-relay` is retained as an optional future server-routed/fan-out component rather than the 1:1 default.
+**Verified:** Repository-source verification for the decision used `n0-computer/iroh`, `n0-computer/iroh-ffi`, `moq-dev/moq` including `rs/moq-native/src/iroh.rs`, and `n0-computer/iroh-live`. CI/`scripts/verify.sh` evidence is not yet claimed for this branch; the PR must supply the authoritative gate result on the exact head.
+**Learned:** Upstream MoQ already carries an experimental Iroh transport, and `iroh-live` proves real-time A/V over the combined stack with an Android Kotlin+Rust demo. That evidence is sufficient to choose the architecture direction but not to skip prototype gates: iOS Broadcast Extension process/memory behavior, strict-offline Local configuration, dedicated Internet relay fallback, and Android↔iOS Wi-Fi Aware Direct remain to be proven.
+**Next:** Open Issue #9's PR, verify CI on the exact head, leave it for independent review, then continue the architecture interview/prototype sequencing. Do not transition to implementation or populate `STACK_DECISION_ADR` yet.
