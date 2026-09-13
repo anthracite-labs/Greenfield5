@@ -129,3 +129,34 @@ could not be executed in the local shell before the first commit.
 for independent review. After merge, begin product discovery from `docs/PRODUCT.md`
 in a separate issue; do not introduce an application stack before the later
 architecture/ADR transition.
+
+## 2026-09-13 — Greenfield5 MVP discovery consolidated
+
+**Context:** Issue #3, branch `arena/issue-3-product-definition`, PR #4.
+**Did:** Replaced the intentionally undefined `docs/PRODUCT.md` placeholder with
+the product-owner-approved Greenfield5 MVP contract: one native app acting as
+sender or viewer; Android/iOS cross-platform screen sharing; one sender and one
+viewer; user-selectable Local, Direct, and Internet modes; temporary pairing and
+sender approval; progressive permissions; minimal retention; explicit non-goals;
+Android 10+ / iOS 16+ distribution constraints; and measurable V1 success
+targets. Kept framework, media library, signalling, relay implementation,
+hosting, database, codec, and encryption/key-distribution choices out of
+discovery. `config/project.env` remains `PROJECT_PHASE=discovery` with
+`ALLOW_APP_STACK=0` and no stack ADR.
+**Verified:** GitHub Actions run `34772435227` on product-definition commit
+`b74f25a394a6414a8f13e24c91514593789285d4` reported `Independent checks = success`
+and `Foundation gate = success`. The `Foundation gate` job completed both `Run
+the verification gate` (`bash scripts/verify.sh`) and `Run the negative tests
+(gate must fail when it should)` (`bash scripts/selftest.sh`) successfully.
+**Learned:** The discovery interview initially drifted toward a support platform;
+the product owner corrected the scope to simple one-to-one phone screen sharing.
+Issue #3 therefore contains superseded intermediate comments; the later
+authoritative checkpoint and `docs/PRODUCT.md` are the consolidated product
+truth. QR pairing and fully automatic transport selection were specifically
+superseded: MVP uses code + shareable link and exposes Local / Direct / Internet
+as user-selected modes.
+**Next:** Verify CI again on the final PR head after this memory append. Leave PR
+#4 open for review rather than merging it from this session. Once the product
+contract is merged, move to `PROJECT_PHASE=architecture` in a separate reviewed
+change and research/record the implementation stack via ADR before allowing app
+source code.
