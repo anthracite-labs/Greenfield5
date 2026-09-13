@@ -243,3 +243,20 @@ repo name (`livekit/docs` 404s).
 **Dead ends:** None new; `restund/restund` still not pursued.
 **Next:** Leave PR #8 open for re-review. Then PO answers (revised Q3/Q6)
 and the stack ADR; first prototype is now the Wi-Fi Aware interop spike.
+
+## 2026-09-13 — PR #8 cleanup: P2P wording + PR body refresh
+
+**Context:** Issue #7, PR #8, branch `arena/01a09bf4-greenfield5`.
+**Did:** Applied the re-review's two cleanup items only: fixed the P2P
+topology definition ("a WebRTC PeerConnection", bidirectional — no
+conclusion change) and refreshed the PR #8 body to the corrected head
+(1018 lines, Wi-Fi Aware first prototype, P2P vs SFU candidates, CI
+green). No research, no other doc changes.
+**Verified:** `bash scripts/verify.sh` → exit 0; `bash scripts/selftest.sh`
+→ exit 0 (128/128); CI green on the new head (see PR).
+**Learned:** `gh pr edit --body/--body-file` can exit 0 without
+persisting (observed twice, GraphQL projects warning only); REST
+`PATCH /repos/{o}/{r}/pulls/{n}` with a JSON body applied the same
+update successfully. Always re-read the PR body after editing it.
+**Next:** PR #8 awaits independent re-review; no further work planned
+on this branch unless the reviewer asks.
