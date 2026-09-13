@@ -323,6 +323,7 @@ needs a `WifiManager.MulticastLock` for mDNS (upstream's demo does not take
 one) — spike LAN rows must dial explicit `EndpointAddr` addresses. (6)
 `fast-apple-datapath` (enabled by `iroh-live`) uses private Apple APIs; App
 Store impact is UNKNOWN and is a later decision.
+**Toolchain lesson (same session):** the two local `SKIP`s in the gate are fixable from PyPI, which *is* reachable here: `python3 -m pip install --user --break-system-packages pyyaml shellcheck-py` installs PyYAML and a bundled shellcheck into `~/.local/bin`, after which `shell_lint` and `workflows_yaml` actually execute (`verify.sh` → PASS 17 passed / 0 failed / 1 skipped, the remaining skip being advisory `agentshield`) and `selftest.sh` → PASS 128/128. Before that install, `selftest.sh` reported 1 spurious failure (`workflows_yaml/corrupted: gate exited 0`) purely because the missing parser made the check skip. Neither install touches the repository.
 **Next:** Authorization is needed for the executable home (a fork of
 `n0-computer/iroh-live` or a new scratch repo in `anthracite-labs`) — repository
 creation is administration and was deliberately not done. Then Spike 1A:
