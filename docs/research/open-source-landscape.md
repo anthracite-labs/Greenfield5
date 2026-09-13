@@ -4,6 +4,12 @@
 **Issue:** [#7](https://github.com/anthracite-labs/Greenfield5/issues/7)
 **Status:** research record — informs architecture, decides nothing
 **Product contract:** [docs/PRODUCT.md](../PRODUCT.md) (authoritative; repository state wins on conflict)
+**Revision note (2026-09-13, PR #8 review):** this pass corrects five review
+findings with fresh primary evidence — Wi-Fi Aware Direct mode, neutral
+P2P-vs-SFU Internet comparison, iOS extension memory wording, AirPlay
+scoping, and engineering-safe licensing language — plus a material new
+finding (ReplayKit broadcast API deprecated in the iOS 27 SDK with
+ScreenCaptureKit as successor). No architecture is chosen.
 
 ## Purpose
 
@@ -38,7 +44,7 @@ genuine product-owner trade-offs open.
 | scrcpy | Android sender → desktop viewer | Apache-2.0 | **HARVEST PATTERN** |
 | ScreenStream + ScreenStreamWeb | Android sender → browser/RTSP viewers | MIT | **HARVEST PATTERN** |
 | LocalScreenShare-Android | Android → Android (LAN/hotspot) | **none found** (MIT badge unverified) | **PROTOTYPE REFERENCE** |
-| LiveKit server + mobile SDKs | Server (Go); Android / iOS / Flutter SDKs | Apache-2.0 | **EXTEND** (Internet-mode foundation) |
+| LiveKit server + mobile SDKs | Server (Go); Android / iOS / Flutter SDKs | Apache-2.0 | **EXTEND** (server-routed Internet option — see topology comparison) |
 | Jitsi Meet (+ SDK samples) | Web; Android/iOS via RN SDK | Apache-2.0 | **HARVEST PATTERN** |
 | flutter-webrtc | Flutter (Android/iOS/…) | MIT | **EXTEND** if Flutter is chosen, else **HARVEST PATTERN** |
 | react-native-webrtc | React Native (Android/iOS) | MIT | **EXTEND** if React Native is chosen, else **HARVEST PATTERN** |
@@ -48,7 +54,7 @@ genuine product-owner trade-offs open.
 | coturn | Server (C) | BSD (3-clause, Citrix) | **ADOPT** (relay component, given a WebRTC transport) |
 | eturnal | Server (Erlang) | Apache-2.0 | **ADOPT** (alternative relay) |
 | pion/turn | Go library | MIT | **HARVEST PATTERN** |
-| google/nearby (Connections core) | Android (full media); iOS (Wi-Fi LAN only) | Apache-2.0 | **HARVEST PATTERN** (+ gap evidence for Direct) |
+| google/nearby (Connections core) | Android (full media); iOS (Wi-Fi LAN only) | Apache-2.0 | **HARVEST PATTERN** |
 | android-airplay-server (+ UxPlay) | Android receiver for iOS/macOS senders | GPL-3.0 | **PROTOTYPE REFERENCE** (iOS→Android LAN path) |
 | Moonlight clients + Sunshine host | Android/iOS viewers; desktop-only host | GPL-3.0 | **HARVEST PATTERN** (viewer techniques only) |
 | mediasoup | Server (C++/Node) | ISC | **HARVEST PATTERN** (higher-assembly SFU alternative) |
@@ -95,8 +101,9 @@ protocol designs (pairing, LAN discovery).
   unattended access, and Accessibility-based input — directly against MVP
   non-goals (no remote control, no AccessibilityService, temporary
   no-account sessions); (3) proprietary protocol — hbbs/hbbr cannot carry
-  Greenfield5 media without adopting the whole stack; (4) AGPL on client
-  and server constrains a store-distributed consumer product.
+  Greenfield5 media without adopting the whole stack; (4) AGPL-3.0 on
+  client and server would require legal/compliance review before any
+  code reuse or self-hosted deployment (evaluated here as pattern-only).
 - **Harvest notes (what survives rejection):** the self-hosted
   rendezvous+relay split with `ALWAYS_USE_RELAY` fallback semantics is a
   reasonable ops model to mirror; the Rust-core/Flutter-shell mobile
@@ -165,8 +172,9 @@ protocol designs (pairing, LAN discovery).
 - **Status:** self-described "Experimental" weekend project (★18, pushed
   2026-02-28) (**VERIFIED**). Roadmap (H.264, audio, WebRTC) unimplemented.
 - **License:** README badge claims MIT but **no LICENSE file exists in the
-  repo root** (**VERIFIED** via root listing) — treat as **no license
-  (all rights reserved)**. Must not be copied into Greenfield5.
+  repo root** (**VERIFIED** via root listing) — treat as **unlicensed
+  for reuse purposes** (no permission statement found). Requires
+  clearance before any code reuse; pattern observations only until then.
 - **Security design:** PIN-gated sessions claimed ("Secure Pairing"), but no
   TLS/encryption is mentioned anywhere in the inspected material —
   transport security **UNKNOWN**, presumed absent (**INFERRED** from
@@ -180,7 +188,7 @@ protocol designs (pairing, LAN discovery).
 - **Verdict rationale:** technique demonstrator with a license defect and no
   production qualities.
 
-### LiveKit (server + client-sdk-android/swift/flutter) — EXTEND
+### LiveKit (server + mobile SDKs) — EXTEND (server-routed option)
 
 - **What:** open-source WebRTC SFU (Go, built on Pion) plus first-party
   mobile SDKs with screen-sharing support, token-based rooms, data
@@ -198,20 +206,43 @@ protocol designs (pairing, LAN discovery).
   no-account product if Greenfield5 mints short-lived tokens behind its own
   pairing step (**INFERRED** — standard LiveKit deployment shape, not
   Greenfield5-verified).
+- **Media topology (correction pass, 2026-09-13):** LiveKit's normal media
+  topology is SFU-routed, not peer-to-peer. **VERIFIED** vendor-primary:
+  docs.livekit.io states the server "is an open source WebRTC Selective
+  Forwarding Unit (SFU) that orchestrates realtime communication" and
+  "handles signaling, network address translation (NAT) traversal, RTP
+  routing"; the server README calls it "a scalable, distributed WebRTC
+  SFU". Clients publish/subscribe tracks to the server; no peer-to-peer
+  media mode was found in the inspected docs, and a code search for `p2p`
+  in `livekit/livekit` returns 0 results (**VERIFIED** via `gh api`
+  search/code). LiveKit's TURN (`turn:` in `livekit.yaml`,
+  `pkg/config/config.go`) connects clients *to the server* behind NAT —
+  it is not peer-to-peer relay. Consequence: adopting LiveKit as the
+  Internet default would put a Greenfield5 server in the media path of
+  every session, including sessions where a direct peer path exists.
+  PRODUCT.md §3 requires Internet mode to *prefer* direct peer-to-peer
+  media and relay only when necessary — an SFU-first default is not
+  topology-equivalent to that contract (see the topology comparison and
+  implication 7).
 - **Limitations vs PRODUCT.md:** (1) LiveKit is a transport/rooms layer, not
   a product: join codes, shareable links, 10-minute expiry, sender
   approval, single-viewer admission are Greenfield5-specific session logic
   to build on top; (2) server-dependent — Local (no-Internet) and Direct
   modes need a separate design (an SFU cannot run on the phones);
   (3) operating or contracting server + TURN capacity is a new standing
-  commitment (see product-owner decision 2).
-- **Reuse value:** the strongest Internet-mode foundation found: one Apache
-  stack covering signalling, SFU forwarding, NAT traversal/relay, and all
-  four pairings' sender+viewer media paths, with the iOS BUE already
-  implemented in the Swift and Flutter SDKs.
-- **Verdict rationale:** adopt the transport, build the product on top.
-  EXTEND, not ADOPT, because the session/pairing/Local/Direct layers remain
-  Greenfield5 work.
+  commitment (see product-owner decision 2); (4) the SFU-routed default
+  sits uneasily with the P2P-preferred Internet contract (see above).
+- **Reuse value:** one Apache-2.0 stack covering signalling, SFU forwarding,
+  client↔server NAT traversal, and all four pairings' sender+viewer media
+  paths, with the iOS BUE already implemented in the Swift and Flutter
+  SDKs. It is the strongest *server-routed* Internet option found — not
+  the Internet default. See the neutral P2P-vs-SFU comparison before
+  treating it as the baseline.
+- **Verdict rationale:** a credible transport to extend *if* the stack ADR
+  selects a server-routed Internet topology (which needs a PO relaxation
+  of the P2P preference — see implication 7). EXTEND, not ADOPT, because
+  the session/pairing/Local/Direct layers remain Greenfield5 work either
+  way.
 
 ### Jitsi Meet (+ jitsi-meet-sdk-samples) — HARVEST PATTERN
 
@@ -285,7 +316,8 @@ protocol designs (pairing, LAN discovery).
   App Store distribution** (**VERIFIED** — the holders state they do not
   want the GPL/App-Store conflict to block derived apps).
 - **Limitations vs PRODUCT.md:** no video/screen path at all; desktop-
-  centric product; Android-side GPL-2.0 still constrains code reuse.
+  centric product; any Android-side GPL-2.0 code reuse requires
+  legal/compliance review first (evaluated here as pattern-only).
 - **Reuse value:** the pairing protocol design (discovery → certificate
   exchange → pinned TLS channel) is directly relevant to Local/Direct
   admission without accounts. Reimplement the design; do not lift the code.
@@ -340,7 +372,7 @@ protocol designs (pairing, LAN discovery).
   server, not an operated relay. Relevant only if Greenfield5 builds its
   own signalling/relay server rather than deploying coturn/eturnal.
 
-### google/nearby (Connections core) — HARVEST PATTERN (+ Direct gap evidence)
+### google/nearby (Connections core) — HARVEST PATTERN
 
 - **What:** open-source C++ core of Nearby Connections (plus `dart/`
   bindings): medium-agnostic encrypted P2P sockets over BT/BLE/Wi-Fi with
@@ -358,8 +390,11 @@ protocol designs (pairing, LAN discovery).
   same-LAN transport experiment (with Dart bindings for a Flutter app);
   cannot deliver offline Android↔iOS video. Its encrypted-upgrade design is
   still worth studying.
-- **Verdict rationale:** the repository that proves the Direct-mode gap
-  while offering a partial (same-platform / same-LAN) tool.
+- **Verdict rationale (correction pass):** kept as a partial
+  (same-platform / same-LAN) tool. It is no longer cited as gap evidence:
+  the maintainer's "unless Apple adds something like Wi-Fi Aware"
+  condition has since been met by iOS 26, so the mixed-platform question
+  moved to the Wi-Fi Aware prototype (see platform findings).
 
 ### android-airplay-server (+ UxPlay) — PROTOTYPE REFERENCE
 
@@ -373,8 +408,9 @@ protocol designs (pairing, LAN discovery).
   object and treated as stale for citation.
 - **What it would prove:** iOS→Android screen sharing on a LAN *without*
   writing an iOS sender — the sender uses system Screen Mirroring.
-- **Why not production:** (1) GPL-3.0 would copyleft-constrain the
-  Greenfield5 Android app; (2) reverse-engineered protocol Apple can break;
+- **Why not production:** (1) GPL-3.0 — copyleft implications must be
+  evaluated and legal/compliance review obtained before any code reuse;
+  (2) reverse-engineered protocol Apple can break;
   (3) receiver UX (Control Center mirroring, optional PIN) cannot express
   sender-approval-before-content or single-viewer admission without product
   contortions; (4) DRM content unsupported (stated); (5) no path to
@@ -394,8 +430,9 @@ protocol designs (pairing, LAN discovery).
   **UNKNOWN**).
 - **Reuse value:** Moonlight's mobile viewers are the best open study
   material for low-latency H.264/HEVC rendering, adaptive bitrate, and
-  input-latency discipline on both phone OSes. GPL-3.0 blocks code adoption
-  into a store-distributed Greenfield5 app.
+  input-latency discipline on both phone OSes. GPL-3.0 requires
+  legal/compliance review before any code adoption — recommended use is
+  pattern-only study.
 - **Verdict rationale:** learn the viewer craft; reuse nothing verbatim.
 
 ### mediasoup / pion/webrtc / Galène
@@ -490,19 +527,51 @@ protocol designs (pairing, LAN discovery).
 
 These constrain every option equally. Sourced secondary unless noted.
 
-- **iOS sender is always ReplayKit, and background/system-wide capture
-  always means a Broadcast Upload Extension started from the system
-  broadcast picker.** The extension is a separate memory-capped process:
-  **VERIFIED** primary via `gh api` from `opentok/opentok-ios-sdk-samples`
-  (★198, MIT, archived; `Broadcast-Ext/README.md`): "cap to 450x800 pixels
-  at 10fps for VP8 and at 1068x600 pixels at 15fps for H264, which
-  effectively consumes less than 50MB memory. The iOS system kills
-  extensions if they use more than 50MB." Two integration shapes recur:
-  (a) extension ships frames over an App-Group socket to the app's
-  peer connection (Jitsi, flutter-webrtc, react-native-webrtc —
-  **VERIFIED** file paths above); (b) extension publishes directly to the
-  SFU with a token passed via App Group storage (documented LiveKit
-  pattern — secondary).
+- **iOS sender on iOS 16–26 is ReplayKit, and background/system-wide capture
+  means a Broadcast Upload Extension started from the system broadcast
+  picker.** Two integration shapes recur: (a) the extension ships frames
+  over an App-Group socket to the app's peer connection (Jitsi,
+  flutter-webrtc, react-native-webrtc — **VERIFIED** file paths above);
+  (b) the extension publishes directly to a server with a token passed via
+  App Group storage (documented LiveKit pattern — secondary). The
+  extension runs as a separate memory-capped process; the budget is an
+  *observed engineering figure*, not an Apple guarantee — see next bullet.
+- **Broadcast Extension memory: Apple requirement vs observed limit vs
+  sample recommendation (correction pass, 2026-09-13).** Three distinct
+  things, previously blurred: (1) *Apple platform requirement:* no
+  Broadcast-Upload-Extension-specific memory number was found in the
+  inspected Apple primary docs — the archived App Extension Programming
+  Guide's extension-overview page and the ReplayKit class pages state no
+  figure (**VERIFIED** by fetching both, 2026-09-13). Apple documents only
+  that extensions are constrained processes subject to jetsam-style
+  termination. (2) *Observed/practical limit:* ~50 MB jetsam behavior for
+  the broadcast extension is widely corroborated outside Apple —
+  practitioner guide (ForaSoft 2026: "hard 50 MB memory cap"),
+  vendor docs (ZEGOCLOUD: "The memory usage limit for the Broadcast
+  Upload Extension is 50 MB"), and Apple Developer Forum reports of
+  extensions "killed for 50M bytes memory limit" (thread 706972) —
+  all secondary. (3) *OpenTok sample recommendation:* 450x800@10 (VP8) /
+  1068x600@15 (H.264) to stay under ~50 MB (**VERIFIED** primary via
+  `gh api` from `opentok/opentok-ios-sdk-samples`,
+  `Broadcast-Ext/README.md`). Retain the OpenTok budgets as *prototype
+  starting points*, and measure the real ceiling on supported iOS
+  versions/devices during implementation. Do not treat 50 MB as a durable
+  OS guarantee.
+- **ReplayKit broadcast API is deprecated in the iOS 27 SDK; the successor
+  is ScreenCaptureKit (correction pass, 2026-09-13, material new finding).**
+  **VERIFIED** Apple-primary: `RPBroadcastSampleHandler`,
+  `RPBroadcastController`, `RPSystemBroadcastPickerView`, and the
+  surrounding broadcast classes are all marked "iOS 10.0–27.0 Deprecated",
+  while ScreenCaptureKit is marked "iOS 27.0+" with a "Capturing screen
+  content on iOS" sample (system content-sharing picker, `SCStream`
+  sample-buffer outputs, `screen-capture` + `audio` background modes for
+  background full-display capture). Deprecated ≠ removed: the BUE path
+  remains the documented mechanism across Greenfield5's iOS 16–26 window
+  (**INFERRED** from the availability ranges — removal timing is
+  **UNKNOWN**), so V1 planning on BUE is unaffected. But the stack ADR
+  must include a ScreenCaptureKit migration track, and the BUE harvest
+  references above should be read as the iOS ≤26 implementation, not the
+  permanent one.
 - **Android sender is MediaProjection + foreground service + hardware
   encode**, with OS-version-specific foreground-service-type and consent
   rules (in force since Android 10; partial-sharing and further hardening
@@ -510,17 +579,89 @@ These constrain every option equally. Sourced secondary unless noted.
   references
   **VERIFIED** above; exact Android 10–17 behavior matrix is
   **UNKNOWN / REQUIRES PROTOTYPE** per OS version during implementation.
-- **No seamless offline Android↔iOS high-bandwidth device-to-device path
-  exists.** iOS exposes no Wi-Fi Direct API to apps and Multipeer
-  Connectivity is Apple-only; Android cannot speak AWDL; Nearby
-  Connections on iOS is Wi-Fi-LAN (+ slow BLE) only — the OSS core's
-  README states the iOS medium limit verbatim (**VERIFIED** primary), and
-  a maintainer states seamless offline cross-platform transfer is unlikely
-  without new Apple APIs (secondary, `google/nearby` discussion #2447).
-  Consequence: mixed-platform Direct mode must be hotspot-anchored LAN
-  (one phone hosts, the other joins, then Local-mode protocols run) or
-  BLE-assisted signalling + hosted connectivity — all
-  **UNKNOWN / REQUIRES PROTOTYPE**, none turnkey.
+- **Android 17 gates local-network access (correction pass, Local-mode
+  flag).** Per the Android Developers Blog "Android 17 is here" (vendor,
+  2026-06): apps targeting SDK 37+ have local-network access blocked by
+  default and need privacy-preserving pickers or the new
+  `ACCESS_LOCAL_NETWORK` permission. Greenfield5's Local mode (LAN
+  discovery + direct sockets) must be designed against this from the
+  start; exact behavior for NSD/mDNS + socket flows is an implementation
+  detail for the stack ADR, flagged here so it is not discovered late.
+- **Direct mode, mixed-platform: Wi-Fi Aware (NAN) is an unproven candidate —
+  UNKNOWN / REQUIRES PROTOTYPE (correction pass, 2026-09-13).** The prior
+  "no path exists" conclusion is withdrawn as overstated: both platforms
+  now expose Wi-Fi Aware, but Android↔iOS interoperability is *not*
+  demonstrated, so interop must not be assumed from the shared name.
+  Fact base, per side:
+  - *iOS 26 (Apple-primary, developer.apple.com, fetched 2026-09-13):*
+    `WiFiAware` framework on iOS/iPadOS 26+ and Mac Catalyst 26+; Wi-Fi
+    Alliance NAN standard; no access point or Internet required; Apple
+    claims high-bandwidth/low-latency transfers. Capability entitlement
+    (`Publish`/`Subscribe`); services statically declared in Info.plist
+    (DNS-SD form, ≤15-char name, `_tcp`/`_udp`); pairing via
+    DeviceDiscoveryUI (documented for device-to-device and app-to-app
+    cases "such as file transfer and media streaming") or
+    AccessorySetupKit (accessories); publish/subscribe/connect *only with
+    paired devices*, authenticated and encrypted at the Wi-Fi layer;
+    Network-framework providers (`NetworkListener/Browser/Connection`;
+    UDP/TCP/TLS); `WAPerformanceMode` bulk/realtime;
+    `WAAccessCategory` incl. `interactiveVideo`; per-connection
+    performance reports; background operation documented ("whenever it's
+    running, in both foreground and background states", via existing
+    mechanisms such as BackgroundTasks); no Simulator — physical devices
+    only; runtime capability checks via `WACapabilities`. Store posture: the
+    entitlement is a standard Xcode capability with no documented
+    special-approval request process in the inspected Apple docs (review
+    risk for a screen-sharing app remains **UNKNOWN** until a real
+    submission); Android side is manifest/permission-declarative. Device
+    floor is secondary-convergent (iPhone 12+; iPad 10th+/mini 6th+/
+    Air 4th+/Pro 11" 3rd+/12.9" 5th+) — treat as provisional until
+    confirmed on device or in Apple text.
+  - *Android (Android-primary, docs updated 2026-09-01, fetched
+    2026-09-13):* `android.net.wifi.aware` since API 26 with
+    `FEATURE_WIFI_AWARE` hardware gating; permissions
+    `NEARBY_WIFI_DEVICES` (API 33+, `neverForLocation`) /
+    `ACCESS_FINE_LOCATION` (≤32); availability caveats (Wi-Fi or
+    Location off; some devices conflict with Wi-Fi Direct/SoftAP/
+    tethering); publish/subscribe/messaging plus datapath via
+    `WifiAwareNetworkSpecifier` with IPv6 sockets; datapath security is
+    Open or secured via `WifiAwareDataPathSecurityConfig`
+    (PSK passphrase/PMK/cipher-suite, API 33+); a simplified
+    `AwareDataPathRequest` accept/initiate API was added in API 37
+    (Android 17 = API 37 **VERIFIED** via the Android Developers Blog).
+    No NAN-pairing-setup counterpart API was found in the inspected
+    public surface.
+  - *Interop evidence:* same NAN standard in principle, but Apple
+    mandates its paired-device flow with Wi-Fi-layer authentication
+    while Android documents only Open/PSK datapaths — whether an
+    Android peer can complete Apple's pairing is the crux and is
+    **UNKNOWN**. Working interop exists only off-target: ESP32↔iPhone
+    (Espressif blog 2026-08 + `esp-idf` NAN examples — proves iOS
+    speaks standard NAN pairing + datapath with a *configurable* peer,
+    not with Android). Android↔iOS attempts in Apple forums report
+    discovery failures and manual PASN experiments (secondary); a GitHub
+    repo search for Android↔iOS Wi-Fi Aware interop returned nothing
+    (**VERIFIED** empty, 2026-09-13).
+  - *Smallest prototype to answer it:* one Android publisher + one iOS
+    subscriber on a shared Greenfield5 service string, then (1) does
+    cross-platform discovery succeed? (2) does Apple's pairing complete
+    with the Android device as peer? (3) does a datapath come up in both
+    directions with screen-video-suitable throughput/latency against the
+    500 ms Direct target? Run on iPhone 12+ hardware and representative
+    `FEATURE_WIFI_AWARE` Android hardware (API 26 floor, API 33/37
+    datapath behavior noted separately).
+  - *Fallback retained:* hotspot-anchored LAN (one phone hosts, the other
+    joins, then Local-mode protocols) stays a credible alternative, not
+    the only path; it is likewise **UNKNOWN / REQUIRES PROTOTYPE** for
+    the mixed-platform join UX.
+  - *What did not change:* Nearby Connections on iOS remains
+    Wi-Fi-LAN-only (OSS README, **VERIFIED** primary); Multipeer
+    Connectivity remains Apple-only with documented background session
+    teardown (Apple docs, **VERIFIED** primary). The review's aside that
+    Multipeer is "deprecated" was *not* confirmed — the framework page
+    is current with no deprecation banner (checked 2026-09-13) — but
+    that changes nothing, since Apple-only transport cannot serve
+    mixed-platform Direct either way.
 - **Store-handoff deep linking lost its free default.** Firebase Dynamic
   Links shut down 2025-08-25 (secondary, multiple consistent sources);
   native App Links / Universal Links do not do deferred (through-install)
@@ -535,17 +676,73 @@ These constrain every option equally. Sourced secondary unless noted.
   design, TURN capacity, and mobile-network behavior — architecture and
   testing concerns, not research findings.
 
-## Capability coverage
+## Internet media topology: direct P2P vs SFU-routed (neutral comparison)
+
+Correction pass, 2026-09-13. The first pass promoted LiveKit without
+comparing it against the topology PRODUCT.md §3 actually contracts:
+*prefer direct peer-to-peer media, relay only when NAT/firewall requires
+it*. Both topologies below are WebRTC and both are credible; neither is
+selected here. Evidence labels apply per cell: vendor docs and inspected
+source are **VERIFIED**; architectural readings are **INFERRED**; cost and
+reliability figures from secondary comparisons are marked as such and are
+*not* Greenfield5 commitments.
+
+Path definitions (what the words mean in this section):
+
+- *Direct media path:* one WebRTC PeerConnection per direction between the
+  two phones (ICE host/srflx candidates); encoded media flows phone to
+  phone with no server touching it.
+- *TURN-relayed media path:* the same peer-to-peer PeerConnection, but ICE
+  nominates a TURN allocation (e.g. self-hosted coturn) because no direct
+  candidate pair works. The relay forwards encrypted packets without
+  joining the call model.
+- *SFU-routed media path:* each phone holds a PeerConnection *to the
+  server* (LiveKit), which receives each track once and forwards it to the
+  other participant (LiveKit docs: server "handles signaling, NAT
+  traversal, RTP routing" — **VERIFIED** vendor-primary). A LiveKit
+  TURN service helps clients *reach the server*, not each other.
+- *Signalling path:* the out-of-band channel exchanging SDP and ICE
+  candidates (plus Greenfield5 session state). Both topologies need one:
+  minimal custom rendezvous for P2P (shapes **VERIFIED**: apprtc sample,
+  ScreenStreamWeb server), rooms + tokens + WebSocket signalling bundled
+  with LiveKit (**VERIFIED**: server docs, SDKs).
+
+| Dimension | Direct P2P + ICE/STUN/TURN | LiveKit SFU-routed |
+| :-- | :-- | :-- |
+| Topology | Phone↔phone PeerConnection; server only for signalling (+ TURN only when nominated) | Phone↔server↔phone; server in the media path of every session (**VERIFIED** docs + `p2p` code search = 0) |
+| NAT traversal | ICE (host/srflx/relay candidates) between the two phones; needs STUN + TURN reachable by both | ICE between each phone and the server; needs STUN + TURN (built-in or coturn) reachable by each phone |
+| Relay behavior | Relay engages only when direct fails — matches the §3 contract by construction (**INFERRED** from ICE semantics) | Every session pays a server hop; TURN additionally engages per client↔server leg as needed. Lowest-latency direct sessions are impossible by design (**INFERRED** from topology) |
+| iOS/Android capture support | Identical client-side capture either way (BUE/MediaProjection feed a local video track); no topology advantage (**INFERRED** — capture verified independently of transport) | Same capture; LiveKit SDKs additionally bundle the BUE bridge and track lifecycle (**VERIFIED** file paths) |
+| Signalling burden | Greenfield5 builds minimal SDP/candidate rendezvous + session logic (join codes, approval, expiry) | Session logic still custom; SDP/candidate/room/token mechanics come with the server (**VERIFIED** docs) |
+| Operational burden | Near-stateless signalling + STUN + TURN capacity for the relayed fraction only | Stateful SFU fleet (UDP port ranges, DTLS/SRTP termination, Redis once multi-node — secondary deployment guides) + TURN + signalling |
+| Bandwidth cost | ~Zero server egress except TURN-relayed sessions (secondary industry rule of thumb: relayed fraction ~10–20%; *not* a Greenfield5 measurement) | Server egress for 100% of sessions (receive + forward every track) |
+| Privacy implications | Direct sessions expose media to no third host; TURN-relayed sessions expose packets to the relay operator (DTLS-SRTP transport encryption in all cases; content-observability claims **INFERRED** from architecture) | All sessions expose media to the SFU operator unless an additional E2EE layer is added (**INFERRED**; LiveKit E2EE option exists — secondary) |
+| Connection reliability | Fewer moving parts; success = ICE success between two phones + signalling uptime (**INFERRED**) | Adds SFU availability/region placement as a dependency; server side can smooth some client flakiness (**INFERRED**; region-mesh behavior secondary) |
+| Reconnect behavior | Custom: ICE restart + re-signalling logic to build (**INFERRED** scope) | SDK-bundled automatic reconnection and quality adaptation (**VERIFIED**: LiveKit transport docs list both) |
+| Implementation complexity | Custom peer lifecycle, stats, and edge cases on both clients; small server | SDK integration on clients; server deployment/ops/upgrade discipline instead |
+| Scalability Greenfield5 needs | Scales as many independent 1:1 sessions behind stateless signalling (**INFERRED**); no fan-out machinery needed — PRODUCT.md forbids multi-viewer | Same 1:1 scaling need; SFU fan-out/simulcast machinery unused (**INFERRED** from §2 exactly-one-viewer). Pays multi-party architecture for a two-party product |
+
+Architectural consequence (the review's core point, confirmed): if
+Greenfield5 intends to prefer peer-to-peer media and relay only when
+necessary, an SFU-first architecture is not topology-equivalent to raw
+WebRTC P2P + TURN fallback — it replaces "sometimes relayed" with "always
+server-routed". Neither is rejected here: P2P honors the contract with
+more custom client work; SFU buys SDK integration and bundled reconnection
+at the price of a permanent media-path server and a contract tension that
+only the product owner can relax (see implication 7). No third credible
+Internet media topology surfaced in either pass (custom UDP would carry an
+unretired prototype burden; mesh-VPN overlays were rejected on
+product-model fit).
 
 | Capability | Evidence strength | What exists | What is missing |
 | :-- | :-- | :-- | :-- |
 | Android sender | **Strong** | scrcpy, ScreenStream `webrtc/`+`rtsp/`, LocalScreenShare, LiveKit/RN/FWEbrtc capturers | Version matrix (Android 10–17) tuning |
-| iOS sender | **Moderate** | BUE technique proven 4+ ways (LiveKit, Jitsi, FWEbrtc, RN-WebRTC, OpenTok) with file paths | No Greenfield5-fit turnkey module; memory/lifecycle tuning unproven |
+| iOS sender | **Moderate** | BUE technique proven 4+ ways (LiveKit, Jitsi, FWEbrtc, RN-WebRTC, OpenTok) with file paths; valid for iOS 16–26 | No Greenfield5-fit turnkey module; memory/lifecycle tuning unproven; iOS 27 deprecates RPBroadcast* — ScreenCaptureKit migration track required |
 | Android viewer | **Strong** | Every WebRTC mobile SDK renders remote video; Moonlight techniques | Nothing structural |
 | iOS viewer | **Strong** | Same as Android viewer | Nothing structural |
-| Local | **Strong (patterns)** | NSD/mDNS + PIN + TLS/HTTPS shape (LocalSend, KDE, ScreenStream, LocalScreenShare) | Greenfield5's own session/admission assembly |
-| Direct | **Weak / gap** | Android↔Android via Nearby/Wi-Fi Direct; iOS↔iOS via Multipeer (platform APIs, secondary) | **Mixed-platform offline video: no credible solution** (see gap 1) |
-| Internet | **Strong (options)** | LiveKit SFU; raw WebRTC + coturn; ScreenStreamWeb signalling shape | Greenfield5 session layer; operated capacity |
+| Local | **Strong (patterns)** | NSD/mDNS + PIN + TLS/HTTPS shape (LocalSend, KDE, ScreenStream, LocalScreenShare) | Greenfield5's own session/admission assembly; Android 17 local-network permission design (`ACCESS_LOCAL_NETWORK`) |
+| Direct | **UNKNOWN — Wi-Fi Aware candidate** | iOS 26 + Android (API 26+) Wi-Fi Aware APIs documented (primary); same NAN standard in principle | Android↔iOS interop unproven — prototype first; hotspot-anchored LAN as fallback (see gap 1) |
+| Internet | **Strong (two verified topologies)** | P2P + ICE/STUN/TURN *or* LiveKit SFU-routed (see neutral comparison); ScreenStreamWeb signalling shape | Greenfield5 session layer; operated capacity; topology choice (needs PO input only if SFU-first — see implication 7) |
 | Pairing/signalling | **Moderate (patterns)** | Wormhole PAKE design, KDE TLS pairing, LiveKit tokens, PairDrop rooms | Turnkey short-code+link+approval module (see gap 2) |
 | NAT traversal/relay | **Strong** | coturn ADOPT, eturnal alt, LiveKit TURN, pion/turn lib | Deployment/capacity decisions |
 | Security/session admission | **Moderate** | Transport story strong (DTLS-SRTP/TLS); approval/expiry/single-viewer = custom logic | E2EE-from-server posture (see PO decision 5) |
@@ -556,7 +753,9 @@ These constrain every option equally. Sourced secondary unless noted.
    `Sources/LiveKit/Broadcast/` (`LKSampleHandler.swift`,
    `BroadcastScreenCapturer.swift`, `IPC/`); `livekit/client-sdk-android`
    screen capturer; `livekit/client-sdk-flutter` iOS-broadcast support —
-   plus the Apache-2.0 Go SFU. First stop for Internet mode.
+   plus the Apache-2.0 Go SFU. First stop for the *server-routed*
+   Internet option; read alongside the neutral P2P-vs-SFU comparison,
+   not as the default.
 2. **Jitsi in-repo broadcast extension** — `jitsi/jitsi-meet`
    `ios/app/broadcast-extension/` (`SampleHandler.swift`,
    `SampleUploader.swift`) + handbook socket-bridge contract
@@ -577,25 +776,40 @@ These constrain every option equally. Sourced secondary unless noted.
    stores (Apache-2.0).
 7. **KDE Connect pairing design** — UDP discovery → certificate exchange →
    pinned TLS. Template for account-free Local/Direct admission (GPL —
-   reimplement, don't lift).
+   pattern only unless legal/compliance review clears reuse).
 8. **Magic Wormhole pairing design** — PAKE-bound single-use short codes +
    mailbox rendezvous + transit relay (MIT). Blueprint for the join-code →
    authenticated-session step.
 9. **coturn deployment** — the default relay answer (BSD); eturnal as the
    named alternative (Apache-2.0).
-10. **OpenTok BUE engineering budget** — 450x800@10 (VP8) / 1068x600@15
-    (H.264) under the 50 MB extension ceiling (**VERIFIED** primary).
-    Adopt as the initial iOS-sender budget until measured otherwise.
+10. **OpenTok BUE budgets (prototype starting points, not requirements)** —
+    450x800@10 (VP8) / 1068x600@15 (H.264) against the *observed* ~50 MB
+    extension behavior (**VERIFIED** primary for the sample text; the
+    figure itself is corroborated secondary, not an Apple guarantee —
+    see platform findings). Start here; measure on supported devices.
 11. **google/nearby Connections core** — Apache-2.0 C++ core + Dart
-    bindings; candidate Android↔Android Direct transport and the primary
-    citation for the mixed-platform Direct gap.
+    bindings; candidate Android↔Android Direct transport. No longer cited
+    as gap evidence — Wi-Fi Aware supersedes that conclusion.
+12. **Wi-Fi Aware platform references (Direct prototype kit)** — Apple:
+    `WiFiAware` framework + "Building peer-to-peer apps" sample +
+    entitlement/service/pairing articles (developer.apple.com, primary);
+    Android: Wi-Fi Aware guide (docs updated 2026-09-01) +
+    `WifiAwareDataPathSecurityConfig` (API 33+) + `AwareDataPathRequest`
+    (API 37) references (primary). Interop references that are *not*
+    Android↔iOS: `esp-idf` NAN examples + Espressif ESP32↔iPhone write-up
+    (standard-NAN proof with a configurable peer).
 
 ## Gaps (no credible reusable solution found)
 
-1. **Mixed-platform offline Direct video.** Nothing found delivers
-   Android↔iOS screen video with no Internet and no shared LAN. Candidate
-   for the first proof-of-concept: hotspot-anchored LAN + Local-mode
-   protocols, with manual-join UX where the OS requires it.
+1. **Android↔iOS Wi-Fi Aware interop proof.** Both platforms document
+   Wi-Fi Aware, but no working Android↔iOS passing of discovery →
+   pairing → datapath was found. Smallest prototype: shared service
+   string, cross-platform discovery check, Apple pairing completion
+   with Android as peer, bidirectional datapath with throughput/latency
+   measured against the 500 ms Direct target (iPhone 12+ and
+   `FEATURE_WIFI_AWARE` Android hardware). Hotspot-anchored LAN +
+   Local-mode protocols remains the fallback prototype, with manual-join
+   UX where the OS requires it.
 2. **Turnkey short-code + link + sender-approval session module.** Pairing
    *designs* abound; a droppable component matching PRODUCT.md §4 does not.
    Greenfield5 must build this (the wormhole/KDE/LiveKit-token shapes bound
@@ -613,17 +827,23 @@ These constrain every option equally. Sourced secondary unless noted.
 
 ## Architecture implications (narrowing, not deciding)
 
-1. **The iOS sender decision is forced in shape, open in detail.** Any
-   viable stack includes a native ReplayKit Broadcast Upload Extension and
-   one of the two verified integration shapes (App-Group socket bridge vs
-   extension-direct publish). This rules out pure-web, VNC-only,
-   AirPlay-only-for-iOS→iOS, and any framework story without a native
-   extension path — before any ADR is written.
+1. **The iOS sender decision is forced in shape, open in detail — with a
+   deprecation horizon.** Any viable stack includes a native ReplayKit
+   Broadcast Upload Extension and one of the two verified integration
+   shapes (App-Group socket bridge vs extension-direct publish). This
+   rules out pure-web, VNC-only, AirPlay-only-for-iOS→iOS, and any
+   framework story without a native extension path — before any ADR is
+   written. Correction pass: the RPBroadcast* API is deprecated in the
+   iOS 27 SDK with ScreenCaptureKit (iOS 27+) as successor, so the ADR
+   must scope BUE as the iOS ≤26 implementation plus a migration track,
+   not the permanent answer.
 2. **No adoption candidate; plan for assembly.** The integration surface is:
    native capture per OS + viewer per OS + Local/Direct transports +
-   Internet SFU/signalling/relay + pairing/session service + store links.
-   LiveKit + coturn cover the Internet column; the rest is Greenfield5
-   product code guided by the harvested patterns.
+   Internet media/signalling/relay + pairing/session service + store
+   links. The Internet column has two verified topologies (direct P2P +
+   ICE/STUN/TURN, or SFU-routed) compared neutrally above — neither is
+   the baseline until the stack ADR selects one. Everything else is
+   Greenfield5 product code guided by the harvested patterns.
 3. **WebRTC is the only transport family with mobile sender+viewer,
    NAT-traversal, and relay OSS across all four pairings.** Every custom
    protocol examined fails ≥1 pairing or license gate (RustDesk: iOS send;
@@ -632,19 +852,38 @@ These constrain every option equally. Sourced secondary unless noted.
    This narrows but does not finalize: choosing WebRTC (and which SFU or
    raw stack) remains the stack ADR's decision, and a custom-UDP design
    would carry a prototype burden this pass found no evidence to retire.
-4. **Internet mode implies Greenfield5-operated or contracted services.**
-   Short codes, links, and relay fallback cannot be serverless. Local mode
-   can and should be serverless (LAN discovery + PIN + TLS). Direct mode
-   needs the hotspot-anchored design proven before it constrains anything.
-5. **Copyleft is the dominant license risk.** GPL/AGPL cover the nearest
-   applications (RustDesk, AirPlay receivers, Moonlight, KDE, wormhole
-   alternatives) while the adoptable infrastructure is BSD/Apache/MIT.
-   The stack ADR must include a license posture; no GPL/AGPL code enters
-   Greenfield5 without a recorded decision (see PO decision 4).
+4. **Internet mode implies Greenfield5-operated or contracted services
+   under either topology.** Short codes, links, signalling, and relay
+   fallback cannot be serverless (the topologies differ only in how much
+   server sits in the media path). Local mode can and should be
+   serverless (LAN discovery + PIN + TLS), designed against the Android
+   17 local-network permission from the start. Direct mode needs the
+   Wi-Fi Aware prototype (hotspot-anchored LAN as fallback) before it
+   constrains anything.
+5. **Copyleft needs a recorded posture before any reuse.** GPL/AGPL-family
+   licenses cover several near-fit candidates (RustDesk AGPL-3.0; AirPlay
+   receivers, Moonlight, KDE Connect, PairDrop/Snapdrop, Briar under
+   GPL variants; SimpleX AGPL-3.0), while the infrastructure candidates
+   are BSD/Apache/MIT/ISC. For each GPL/AGPL candidate this document
+   states only the license fact and the reuse shape it was evaluated in
+   (code reuse, process isolation, server deployment, or pattern-only) —
+   whether a given shape creates a compliance concern requires
+   legal/compliance review before adoption, and this document is not
+   legal advice. The stack ADR must record the posture (see PO decision
+   4); until it does, GPL/AGPL material stays pattern-only.
 6. **"One native app" needs a recorded reading.** The evidence supports
    either native-two-codebase or cross-platform-with-native-capture; both
    keep the hard platform work native. The ADR cannot credibly compare
    options until the phrase's intent is pinned (see PO decision 1).
+7. **SFU-first Internet would need a product-owner relaxation.** The P2P
+   preference with relay-only-when-necessary is in the committed contract
+   (§3). A server-routed default contradicts it topologically (every
+   session server-routed, including directly reachable pairs). The stack
+   ADR may still recommend SFU-first on engineering grounds (SDK
+   integration, bundled reconnection, ops shape) — but only with an
+   explicit PO decision to relax the preference, recorded alongside the
+   ADR. Without that relaxation, direct P2P + ICE/STUN/TURN is the
+   contract-faithful baseline to beat.
 
 ## Product-owner decisions (only what genuinely needs judgment)
 
@@ -658,28 +897,36 @@ These constrain every option equally. Sourced secondary unless noted.
    the remaining call is product/engineering taste: code-sharing vs
    platform-purity. Consequences bind the stack ADR.
 2. **Who operates Greenfield5's Internet services, and at what cost
-   tolerance?** Internet mode needs rendezvous/signalling + TURN standing
-   capacity. Options: (a) self-host OSS (LiveKit + coturn) — full control
-   and privacy posture, ops burden, capacity planning; (b) managed
-   (e.g. LiveKit Cloud or a TURN provider) — faster start, recurring cost,
-   third-party data path; (c) hybrid (managed TURN, self-hosted
-   signalling). Consequences: budget, ops staffing, privacy promises, and
-   App Store privacy declarations. PRODUCT.md mandates relay fallback but
-   is silent on operating model — that silence is the PO's to fill.
-3. **Is an AirPlay-assisted iOS→Android LAN path acceptable?** Options:
-   (a) pure Greenfield5 capture everywhere — consistent UX, full BUE
-   investment up front; (b) allow the Android viewer to act as an AirPlay
-   receiver so an iPhone shares via system Screen Mirroring — earlier
-   iOS→Android coverage, but inconsistent UX (leaves the app, Control
-   Center flow), GPL copyleft consequence, Apple-protocol fragility, and
-   no iOS→iOS story. This is a product-shape call, not a technical one.
-4. **Copyleft tolerance.** Options: (a) permissive-only in-app
-   (BSD/MIT/Apache) + self-hosted AGPL services avoided or isolated —
-   simplest App Store posture, excludes the nearest applications as donors;
-   (b) allow GPL-family code with compliance (source offers, license
-   notices) — widens reuse (KDE protocol code, AirPlay receiver) at legal
-   and store-review cost. AGPL self-hosting additionally obligates source
-   availability to users. Needs a legal-aware PO answer before any reuse.
+   tolerance?** Either Internet topology needs rendezvous/signalling +
+   TURN standing capacity; SFU-routed additionally needs a media-path
+   fleet (server egress on 100% of sessions vs the relayed fraction —
+   see the topology comparison). Options: (a) self-host OSS (signalling
+   + coturn, with or without an SFU) — full control and privacy posture,
+   ops burden, capacity planning; (b) managed (e.g. LiveKit Cloud or a
+   TURN provider) — faster start, recurring cost, third-party data path;
+   (c) hybrid (managed TURN, self-hosted signalling). Consequences:
+   budget, ops staffing, privacy promises, and App Store privacy
+   declarations. PRODUCT.md mandates relay fallback but is silent on
+   operating model — that silence is the PO's to fill.
+3. **AirPlay-assisted iOS→Android: excluded unless the contract changes.**
+   This is *not* an architecture option on the table: an AirPlay-receiver
+   flow (sender leaves Greenfield5 for system Screen Mirroring) cannot
+   express the committed one-app pairing, admission, and sender-approval
+   semantics, carries GPL-3.0 compliance questions for any code reuse,
+   and offers no iOS→iOS story. Default: exclude it; keep the dossier as
+   a PROTOTYPE REFERENCE for technique only. The only PO input invited
+   is whether even prototype time is banned — otherwise no decision is
+   needed here, and any future product use would first require a
+   product-contract change.
+4. **Copyleft posture.** Options: (a) permissive-only in-app code
+   (BSD/MIT/Apache/ISC) with GPL/AGPL material kept pattern-only —
+   simplest review posture, excludes near-fit donors as code sources;
+   (b) evaluate GPL/AGPL reuse case-by-case with legal/compliance review
+   (covering code reuse, process isolation, and server-deployment shapes
+   separately) before any adoption. Either way, no GPL/AGPL code or
+   server deployment enters Greenfield5 without a recorded, reviewed
+   decision. This document states license facts only and is not legal
+   advice.
 5. **How strong is the privacy promise?** PRODUCT.md requires no
    persistence and no content retention, but not encryption-from-
    Greenfield5-servers. Options: (a) transport encryption only
@@ -688,13 +935,18 @@ These constrain every option equally. Sourced secondary unless noted.
    Greenfield5 infrastructure — stronger promise, key-distribution
    complexity via the pairing step, constrains SFU features. The PO owns
    the promise; architecture owns the mechanism.
-6. **Confirm the Direct-mode acceptance reading.** Given no seamless
-   offline mixed-platform video path exists, is "Direct = hotspot-anchored
-   LAN with manual join where the OS requires it" an acceptable reading of
-   "Direct mode works without Internet where the devices have a compatible
-   direct transport" — or should mixed-platform Direct expectations be
-   narrowed further? Consequences: MVP acceptance scope and the first
-   prototype's target.
+6. **Confirm the Direct-mode acceptance reading.** Wi-Fi Aware is now the
+   first prototype (discovery → pairing → datapath, measured against the
+   500 ms target), with hotspot-anchored LAN as the fallback. Two things
+   need PO confirmation: (a) is "Direct = best proven offline path, with
+   manual join where the OS requires it" an acceptable reading of
+   "where the devices have a compatible direct transport" — including
+   the possibility that Wi-Fi Aware works only on newer devices (iPhone
+   12+ class on iOS 26; hardware-gated `FEATURE_WIFI_AWARE` Android
+   devices) while the app floors stay Android 10+ / iOS 16+? (b) if the
+   prototype fails, does hotspot-anchored LAN remain acceptable, or
+   should mixed-platform Direct expectations narrow further?
+   Consequences: MVP acceptance scope and prototype sequencing.
 
 ## Inspection log (this session, 2026-09-13)
 
@@ -728,6 +980,34 @@ Jitsi handbook + LiveKit docs + Stream docs (BUE integration), ForaSoft
 (maintainer Direct-mode statement), Firebase Dynamic Links shutdown
 coverage (×3, consistent), TURN comparisons (BlogGeek 2026, WebRTC guides),
 Nearby Connections platform docs, Berty status coverage.
+
+## Correction-pass log (PR #8 review, 2026-09-13)
+
+Official platform/vendor docs fetched in full via page fetch (primary):
+Apple `WiFiAware` framework + "Building peer-to-peer apps" +
+"Adopting Wi-Fi Aware" + "Connecting devices for peer-to-peer Wi-Fi" +
+`com.apple.developer.wifi-aware` entitlement; Apple ReplayKit framework +
+`RPBroadcastSampleHandler` (deprecation ranges); Apple ScreenCaptureKit
+framework + "Capturing screen content on iOS" (iOS 27+); Apple Multipeer
+Connectivity framework (no deprecation banner observed); Apple archived
+App Extension Programming Guide extension-overview (no memory figure);
+Android Wi-Fi Aware guide (docs updated 2026-09-01) +
+`AwareDataPathRequest` (API 37) + `WifiAwareDataPathSecurityConfig`
+(API 33+) references; Android 17 release page (beta 4, platform stable);
+docs.livekit.io intro/about (SFU topology), transport index, media
+overview. `gh api`: `p2p` code search in `livekit/livekit` (0 results);
+TURN config paths (`pkg/config/config.go`, `config-sample.yaml`);
+repo search for Android↔iOS Wi-Fi Aware interop (0 results);
+`anagramrice/NAN` + `wesleysfavarin/facebridge` metadata (not
+interop-relevant); `livekit/livekit-docs` located (org search).
+Secondary: Espressif ESP32↔iPhone Wi-Fi Aware blog (2026-08) +
+esp-idf NAN examples; Apple forum Wi-Fi Aware interop attempts;
+MacRumors/9to5Mac iOS 26 Wi-Fi Aware coverage (device floor,
+cross-platform remarks); Android Developers Blog ("Android 17 is here":
+SDK 37, `ACCESS_LOCAL_NETWORK`; beta notes); ZEGOCLOUD + ForaSoft +
+forum thread 706972 (50 MB corroboration); LiveKit self-host guides
+(TURN/ports/Redis); ForaSoft P2P-vs-SFU comparisons (topology guidance,
+cost/latency figures — used qualitatively only).
 
 ## Terminology note
 

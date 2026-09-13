@@ -212,3 +212,34 @@ restund not pursued (relay coverage complete via coturn/eturnal/pion).
 **Next:** Product owner answers the 6 decisions in the research doc (starting
 with the "native app" reading); then the stack ADR session. First prototype
 candidate: hotspot-anchored LAN for mixed-platform Direct.
+
+## 2026-09-13 — PR #8 research corrections (review findings)
+
+**Context:** Issue #7, PR #8, branch `arena/01a09bf4-greenfield5`.
+**Did:** Independently verified all 5 independent-review findings against
+primary sources and corrected `docs/research/open-source-landscape.md`
+(+385/−109): Wi-Fi Aware Direct fact base (UNKNOWN/REQUIRES PROTOTYPE,
+prototype-first, hotspot as fallback); neutral 12-dimension P2P-vs-SFU
+Internet comparison (LiveKit confirmed SFU-routed via vendor docs +
+`p2p` code search = 0); three-way 50 MB memory wording; AirPlay demoted
+from PO option to prototype-reference-only; engineering-safe licensing
+language throughout. Material new finding: RPBroadcast* deprecated in
+the iOS 27 SDK with ScreenCaptureKit (iOS 27+) as successor — BUE stays
+valid for the iOS 16–26 window plus a migration track.
+**Verified:** `bash scripts/verify.sh` → exit 0; `bash scripts/selftest.sh`
+→ exit 0 (128/128); CI on the new head (see PR). Review scorecard: all 5
+findings confirmed (Direct, LiveKit promotion, 50 MB wording, AirPlay
+framing, licensing tone — AirPlay/licensing as framing fixes); 1 reviewer
+aside rejected (Multipeer "deprecated" — framework page current, no
+banner; immaterial since Apple-only either way).
+**Learned:** `fetch_page` reaches Apple/Android/LiveKit docs that sandbox
+egress blocks — official platform docs are fetchable primary sources.
+Android 17 = API 37 (Android Developers Blog); Android 17 blocks local
+network by default for SDK 37+ (`ACCESS_LOCAL_NETWORK`) — flagged for
+Local mode. Apple Wi-Fi Aware mandates paired-device connections;
+Android documents only Open/PSK datapaths with no NAN-pairing API found —
+that asymmetry is the interop crux. `livekit/livekit-docs` is the docs
+repo name (`livekit/docs` 404s).
+**Dead ends:** None new; `restund/restund` still not pursued.
+**Next:** Leave PR #8 open for re-review. Then PO answers (revised Q3/Q6)
+and the stack ADR; first prototype is now the Wi-Fi Aware interop spike.
