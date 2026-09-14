@@ -7,3 +7,19 @@ node_modules/
 .env
 .env.*
 !.env.example
+
+# Application tree (ADR-0006): build output and machine-local state.
+# apps/android/.gitignore and apps/ios/.gitignore carry the details;
+# these are repo-wide safety nets.
+target/
+build/
+.gradle/
+.kotlin/
+local.properties
+*.iml
+.idea/
+xcuserdata/
+DerivedData/
+# Signing material must never be committed (docs/rules/security.md).
+*.keystore
+*.jks
