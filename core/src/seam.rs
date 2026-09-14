@@ -60,10 +60,9 @@ pub struct CoreSession {
 impl CoreSession {
     /// Starts a session from wire codes. Unknown codes are rejected.
     pub fn start(role_code: u8, mode_code: u8) -> Result<Self, CoreError> {
-        let role = Role::from_code(role_code)
-            .ok_or(CoreError::UnknownRoleCode(role_code))?;
-        let mode = ConnectionMode::from_code(mode_code)
-            .ok_or(CoreError::UnknownModeCode(mode_code))?;
+        let role = Role::from_code(role_code).ok_or(CoreError::UnknownRoleCode(role_code))?;
+        let mode =
+            ConnectionMode::from_code(mode_code).ok_or(CoreError::UnknownModeCode(mode_code))?;
         Ok(Self {
             session: Session::new(role, mode),
         })
