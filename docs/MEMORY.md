@@ -268,3 +268,63 @@ on this branch unless the reviewer asks.
 **Verified:** Repository-source verification for the decision used `n0-computer/iroh`, `n0-computer/iroh-ffi`, `moq-dev/moq` including `rs/moq-native/src/iroh.rs`, and `n0-computer/iroh-live`. CI/`scripts/verify.sh` evidence is not yet claimed for this branch; the PR must supply the authoritative gate result on the exact head.
 **Learned:** Upstream MoQ already carries an experimental Iroh transport, and `iroh-live` proves real-time A/V over the combined stack with an Android Kotlin+Rust demo. That evidence is sufficient to choose the architecture direction but not to skip prototype gates: iOS Broadcast Extension process/memory behavior, strict-offline Local configuration, dedicated Internet relay fallback, and Android↔iOS Wi-Fi Aware Direct remain to be proven.
 **Next:** Open Issue #9's PR, verify CI on the exact head, leave it for independent review, then continue the architecture interview/prototype sequencing. Do not transition to implementation or populate `STACK_DECISION_ADR` yet.
+
+## 2026-09-14 — Implementation kickoff: transition + first skeletons (PR #14)
+
+**Context:** Issue #13, PR #14, branch `arena/01a0a051-greenfield5`.
+**Did:** Recorded accepted ADR-0006 (application stack + version pins with
+primary-source evidence: Android Kotlin/Compose on AGP 9.4.0 built-in Kotlin,
+Kotlin+compose plugin 2.4.20, Gradle 9.6.1 wrapper sha-pinned, compile/target
+SDK 37, min 29, JDK 17; iOS Swift 6 + SwiftUI, hand-written Xcode 26 project,
+objectVersion 77 with fileSystemSynchronizedGroups, deployment target 16.0;
+shared zero-dep Rust core `greenfield5-core`, 1.98.1/edition 2024). Flipped
+`config/project.env` to `implementation` + `ALLOW_APP_STACK=1` + ADR pointer.
+Made 8 `selftest.sh` fixtures hermetic (they had relied on committed
+architecture-phase defaults; suite still 128 cases). Built the first vertical
+slice: both shells render the home screen with "Share My Screen"/"View a
+Screen" and Sender/Viewer placeholders, sharing a mirrored
+AppScreen/HomeAction navigation model with unit tests on both sides; core
+holds the session state machine (Role/ConnectionMode/SessionState/
+SessionCommand with stable u8 wire codes; error precedence SessionEnded >
+RoleMismatch > ViewerAlreadyConnected > InvalidTransition; `apply` is the
+only mutator; rejections never mutate) behind the u8-code `seam::CoreSession`
+façade — 33 tests. Added `.github/workflows/stack.yml` (non-required: Rust
+fmt/clippy/test + Android unit tests/assembleDebug; failing cargo steps
+publish output as check-run annotations). Truth-fixed README ("no
+application" claim, 17→18 checks), ARCHITECTURE scope, ROADMAP (ticked
+completed stage items with evidence refs), codemaps (first map:
+core-session.md).
+**Verified:** Local on final heads: `verify.sh` PASS 16/0/2 (skips:
+no_app_stack stood down by validated transition; agentshield advisory 0
+files) and `selftest.sh` PASS 128/128. CI: `verify` green on every pushed
+head; Stack run 34891853465 (head 1c9dd13) fully green — first execution of
+the 33 core tests; Android job green on every head since the first run
+(34875723375). RED record: scaffold heads failed CI (fmt diff: run
+34875723375; compile/clippy: run 34889968626) — tests were committed before
+the implementation, but `todo!()` stubs cannot compile under
+`clippy -D warnings` (unused vars/imports), so the tests' first *execution*
+is the GREEN head; stated as such in the PR.
+**Learned:** Arena sandbox rebuild between turns can rewind local git
+history while keeping the working tree — recovery is `git fetch` + `git
+reset FETCH_HEAD` (mixed); unpushed commits are lost, so push early.
+GH_TOKEN expires roughly hourly mid-session; reconnect via Arena.
+GitHub log blobs (results-receiver/blob.core.windows.net) and
+objects.githubusercontent.com are unreachable from the sandbox: check-run
+**annotations** are the reliable CI-evidence channel; job step summaries do
+NOT surface via the check-runs API (`output.summary` stays null). rustfmt
+heuristics (chain_width≈60, prefer breaking after `=`) are hard to
+hand-predict — the annotation diff loop converges in one cycle per issue and
+beats guessing. AGP 9.4.0 built-in-Kotlin + KGP 2.4.20 via the compose
+plugin + compileSdk 37 built green in CI first try (wrapper fetched through
+the GitHub contents API since services.gradle.org is blocked; jar sha256
+verified against gradle.org). `Vec::new()`+push in tests trips
+`clippy::vec_init_then_push`. `assert_eq!` on `Result<T,_>` needs `T:
+PartialEq` — derive it on façade types up front.
+**Dead ends:** npm/PyPI rustfmt (wrappers only, no binary); release-asset
+downloads (objects host blocked); reading CI logs via any endpoint.
+**Next:** ADR-0006 follow-ups in order: native↔Rust bridge (UniFFI first
+candidate) incl. R8/JNI keep rules and iOS side; macOS-runner CI for the
+iOS project; MoQ/Iroh synthetic-media spike; `ACCESS_LOCAL_NETWORK` plan
+for Local mode at targetSdk 37; iOS 27 RPBroadcast decision; promote Stack
+jobs to required contexts once stable. PR #14 stays open for independent
+ChatGPT review; do not merge it from an agent session.
