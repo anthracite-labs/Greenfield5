@@ -4,11 +4,16 @@ Token-lean maps of how code areas fit together — entry points, call flow, data
 flow, and dependencies — written for an agent that has to orient quickly
 without reading everything.
 
-**Currently empty, deliberately.** There is no application code to map
-(see [../PRODUCT.md](../PRODUCT.md)). The only structure that exists is the
-engineering system, which is already documented in
+**Current maps:**
+
+| Map | Covers |
+| :-- | :-- |
+| [core-session.md](core-session.md) | `core/` — shared Rust session model and the FFI-shaped seam (ADR-0006) |
+
+The engineering system itself is documented in
 [../ARCHITECTURE.md](../ARCHITECTURE.md) and the repository map in
-[../../README.md](../../README.md).
+[../../README.md](../../README.md). Add a map per significant code area as
+it appears (ROADMAP implementation stage).
 
 ## When to add a codemap
 

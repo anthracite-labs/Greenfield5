@@ -237,18 +237,33 @@ reset_sandbox
 expect_pass "env_files/project-env-not-a-dotenv" --only=env_files
 
 # --- Lifecycle-aware no-stack guard -----------------------------------------
+# Fixtures in this section are hermetic: every case sets the FULL lifecycle
+# precondition it depends on (phase, allow flag, and ADR reference) instead of
+# inheriting the repository's committed state. A generated project legitimately
+# transitions to implementation (that is what the guard exists to gate), and a
+# suite that quietly assumed the un-transitioned template defaults would then
+# assert against the wrong baseline. Hermetic fixtures keep the same faults and
+# the same verdicts valid in every phase of the repository's life.
+#
 # 1. Before any transition, an application-stack artifact is rejected.
 reset_sandbox
+set_config PROJECT_PHASE factory
+set_config ALLOW_APP_STACK 0
+set_config STACK_DECISION_ADR ''
 printf '{"name":"placeholder"}\n' > "${SANDBOX}/package.json"
 expect_fail "no_app_stack/rejected-in-factory-phase" --only=no_app_stack
 
 reset_sandbox
 set_config PROJECT_PHASE discovery
+set_config ALLOW_APP_STACK 0
+set_config STACK_DECISION_ADR ''
 printf '{"name":"placeholder"}\n' > "${SANDBOX}/package.json"
 expect_fail "no_app_stack/rejected-in-discovery-phase" --only=no_app_stack
 
 reset_sandbox
 set_config PROJECT_PHASE architecture
+set_config ALLOW_APP_STACK 0
+set_config STACK_DECISION_ADR ''
 mkdir -p "${SANDBOX}/src"
 printf 'placeholder\n' > "${SANDBOX}/src/.keep"
 expect_fail "no_app_stack/rejected-src-dir-in-architecture" --only=no_app_stack
@@ -317,12 +332,15 @@ expect_pass "lifecycle/valid-transition-accepted" --only=lifecycle
 
 # 3. The transition must be explicit and documented, not an ad-hoc edit.
 reset_sandbox
+set_config PROJECT_PHASE factory
 set_config ALLOW_APP_STACK 1
+set_config STACK_DECISION_ADR ''
 expect_fail "lifecycle/allow-without-phase-or-adr" --only=lifecycle
 
 reset_sandbox
 set_config PROJECT_PHASE implementation
 set_config ALLOW_APP_STACK 1
+set_config STACK_DECISION_ADR ''
 expect_fail "lifecycle/allow-without-adr" --only=lifecycle
 
 reset_sandbox
@@ -440,12 +458,14 @@ expect_fail "lifecycle/template-path-still-rejected" --only=lifecycle
 reset_sandbox
 set_config ALLOW_APP_STACK 1
 set_config PROJECT_PHASE discovery
+set_config STACK_DECISION_ADR ''
 printf '{"name":"placeholder"}\n' > "${SANDBOX}/package.json"
 expect_fail "no_app_stack/only-wrong-phase-fails-closed" --only=no_app_stack
 
 reset_sandbox
 set_config PROJECT_PHASE implementation
 set_config ALLOW_APP_STACK 1
+set_config STACK_DECISION_ADR ''
 printf '{"name":"placeholder"}\n' > "${SANDBOX}/package.json"
 expect_fail "no_app_stack/only-missing-adr-fails-closed" --only=no_app_stack
 
@@ -819,10 +839,14 @@ expect_fail "foundation/init-script-deleted" --only=foundation
 
 # --- init-project.sh safety --------------------------------------------------
 # The script must be non-destructive, idempotent, and must never commit, push,
-# or touch provenance.
+# or touch provenance. Fixtures restore the pristine TEMPLATE lifecycle state
+# (empty identity, factory phase, guard up, no stack ADR) so they do not depend
+# on whatever phase the real repository has legitimately transitioned to.
 reset_sandbox
 set_config PROJECT_NAME ''
 set_config PROJECT_PHASE factory
+set_config ALLOW_APP_STACK 0
+set_config STACK_DECISION_ADR ''
 before_head="$(cd "$SANDBOX" && git rev-parse HEAD 2>/dev/null || echo none)"
 before_version="$(sha256sum "${SANDBOX}/.ecc/VERSION" | cut -d' ' -f1)"
 before_licence="$(sha256sum "${SANDBOX}/.ecc/LICENSE-ECC" | cut -d' ' -f1)"
@@ -881,6 +905,8 @@ fi
 reset_sandbox
 set_config PROJECT_NAME ''
 set_config PROJECT_PHASE factory
+set_config ALLOW_APP_STACK 0
+set_config STACK_DECISION_ADR ''
 if (cd "$SANDBOX" && bash scripts/init-project.sh --name 'evil$(touch /tmp/pwned)' >/dev/null 2>&1); then
   bad "init/rejects-unsafe-name" "a name with shell metacharacters was accepted"
 else
@@ -926,6 +952,8 @@ expect_pass "init/force-leaves-valid-lifecycle"
 reset_sandbox
 set_config PROJECT_NAME ''
 set_config PROJECT_PHASE factory
+set_config ALLOW_APP_STACK 0
+set_config STACK_DECISION_ADR ''
 dry_before="$(sha256sum "${SANDBOX}/config/project.env" | cut -d' ' -f1)"
 (cd "$SANDBOX" && bash scripts/init-project.sh --name 'Dry Run' --dry-run >/dev/null 2>&1)
 if [ "$dry_before" = "$(sha256sum "${SANDBOX}/config/project.env" | cut -d' ' -f1)" ]; then

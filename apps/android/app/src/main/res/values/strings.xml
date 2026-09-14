@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Greenfield5</string>
+    <string name="home_title">Greenfield5</string>
+    <string name="home_subtitle">One sender. One viewer. You stay in control.</string>
+    <string name="action_share_my_screen">Share My Screen</string>
+    <string name="action_view_a_screen">View a Screen</string>
+    <string name="action_back">Back</string>
+    <string name="sender_title">Sender</string>
+    <string name="sender_placeholder">Screen capture lands with the native-to-Rust bridge and the MoQ/Iroh transport work (Issue #13 follow-ups).</string>
+    <string name="viewer_title">Viewer</string>
+    <string name="viewer_placeholder">The incoming screen lands with the native-to-Rust bridge and the MoQ/Iroh transport work (Issue #13 follow-ups).</string>
+</resources>

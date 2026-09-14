@@ -1,0 +1,12 @@
+[package]
+name = "greenfield5-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+description = "Shared Greenfield5 core: session role/state model and the narrow seam the native shells consume."
+publish = false
+
+# Zero external dependencies by design at this stage (ADR-0006): the session
+# model is pure std logic. MoQ/Iroh and any FFI mechanism arrive as pinned
+# dependencies in the bridge/transport follow-up work.
+[dependencies]
