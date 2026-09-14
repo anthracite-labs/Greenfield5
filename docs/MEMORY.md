@@ -328,3 +328,37 @@ iOS project; MoQ/Iroh synthetic-media spike; `ACCESS_LOCAL_NETWORK` plan
 for Local mode at targetSdk 37; iOS 27 RPBroadcast decision; promote Stack
 jobs to required contexts once stable. PR #14 stays open for independent
 ChatGPT review; do not merge it from an agent session.
+
+## 2026-09-14 — PR #14 independent review: outcome + PO-accepted iOS deferral
+
+**Context:** PR #14 head `b821eb3`; independent ChatGPT review submitted
+2026-09-14T20:30:28Z (COMMENTED): "CONDITIONAL / no code blocker found".
+**Review outcome:** No CRITICAL/HIGH code or security findings. Transition
+found correctly ADR-backed; `scripts/verify.sh`, ruleset and verify workflow
+not weakened; Rust core fmt/clippy/tests green on the final head; Android
+shell builds/tests in CI; new CI least-privilege with SHA-pinned actions;
+reviewer independently re-hashed `apps/android/gradle/wrapper/
+gradle-wrapper.jar` (SHA-256 `497c8c2a…` matches Gradle's published 9.6.1
+checksum); selftest fixture changes confirmed meaningful (guard checks
+root-level artifacts, so nested `apps/`/`core/` don't neuter the negative
+cases). ONE MEDIUM finding (spec evidence): Issue #13's "both shells render
+the home screen" criterion was labelled "MET (iOS with stated caveat)" but
+per `.ecc/skills/spec-review.md` classifies as PARTIAL until either (1)
+Xcode/macOS CI compiles the iOS shell, or (2) the product owner explicitly
+accepts iOS compile/render verification as a deferred follow-up for #13.
+Reviewer: no source-code change required for the finding.
+**Did:** The product owner explicitly accepted the deferral (reviewer's
+option 2) on 2026-09-14, and directed: no macOS CI in this PR, no scope
+expansion, no application-code changes for the finding. This entry is the
+durable record of that acceptance. PR #14's acceptance rows for the iOS
+home screen and Sender/Viewer entry points now state precisely: the
+implementation exists; Xcode compilation/runtime verification is deferred
+to the recorded macOS-CI follow-up with explicit product-owner approval.
+Known-limitations and a review-reply comment updated to match.
+**Verified:** `verify.sh` PASS on the corrected head locally (16/0/2, same
+two by-design skips); CI `verify` + `Stack` re-run on the corrected head —
+run ids and results quoted in the PR body (never claimed before observed).
+**Next:** PR #14 stays open and ready for final independent review of the
+corrected evidence; merge decision is human. iOS Xcode compile/run
+verification remains the open ADR-0006 follow-up (macOS-runner CI); the
+hand-written pbxproj stays the least-proven artifact until then.
