@@ -39,6 +39,7 @@
 
 pub mod seam;
 pub mod session;
+#[allow(unsafe_code)]
 pub mod uniffi_api;
 
 /// The crate version, as compiled in (`CARGO_PKG_VERSION`).
@@ -51,6 +52,5 @@ pub fn version() -> &'static str {
 // denied via the crate-level deny above.
 #[allow(unsafe_code)]
 #[allow(missing_docs)]
-mod uniffi_scaffolding {
-    uniffi::setup_scaffolding!();
-}
+#[allow(clippy::all)]
+uniffi::setup_scaffolding!();

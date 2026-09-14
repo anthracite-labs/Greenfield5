@@ -11,8 +11,11 @@
 
 use std::sync::{Arc, Mutex};
 
-use crate::session::{ConnectionMode as CoreMode, Role as CoreRole, Session, SessionCommand as CoreCommand, SessionError, SessionState as CoreState};
 use crate::seam::CoreError;
+use crate::session::{
+    ConnectionMode as CoreMode, Role as CoreRole, Session,
+    SessionCommand as CoreCommand, SessionError, SessionState as CoreState,
+};
 
 /// Role of this device in a one-sender/one-viewer session.
 #[derive(uniffi::Enum, Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -162,7 +165,10 @@ pub enum BridgeError {
     #[error("command requires the {expected:?} role")]
     RoleMismatch { expected: Role },
     #[error("command {command:?} is not valid in state {state:?}")]
-    InvalidTransition { state: SessionState, command: SessionCommand },
+    InvalidTransition {
+        state: SessionState,
+        command: SessionCommand,
+    },
     #[error("a viewer is already connected; sessions are one-to-one")]
     ViewerAlreadyConnected,
     #[error("the session has ended; Ended is terminal")]
@@ -172,9 +178,15 @@ pub enum BridgeError {
 impl From<CoreError> for BridgeError {
     fn from(e: CoreError) -> Self {
         match e {
-            CoreError::UnknownRoleCode(code) => BridgeError::UnknownRoleCode { code },
-            CoreError::UnknownModeCode(code) => BridgeError::UnknownModeCode { code },
-            CoreError::UnknownCommandCode(code) => BridgeError::UnknownCommandCode { code },
+            CoreError::UnknownRoleCode(code) => {
+                BridgeError::UnknownRoleCode { code }
+            }
+            CoreError::UnknownModeCode(code) => {
+                BridgeError::UnknownModeCode { code }
+            }
+            CoreError::UnknownCommandCode(code) => {
+                BridgeError::UnknownCommandCode { code }
+            }
             CoreError::Session(se) => se.into(),
         }
     }
@@ -183,14 +195,20 @@ impl From<CoreError> for BridgeError {
 impl From<SessionError> for BridgeError {
     fn from(e: SessionError) -> Self {
         match e {
-            SessionError::RoleMismatch { expected } => BridgeError::RoleMismatch {
-                expected: expected.into(),
-            },
-            SessionError::InvalidTransition { state, command } => BridgeError::InvalidTransition {
-                state: state.into(),
-                command: command.into(),
-            },
-            SessionError::ViewerAlreadyConnected => BridgeError::ViewerAlreadyConnected,
+            SessionError::RoleMismatch { expected } => {
+                BridgeError::RoleMismatch {
+                    expected: expected.into(),
+                }
+            }
+            SessionError::InvalidTransition { state, command } => {
+                BridgeError::InvalidTransition {
+                    state: state.into(),
+                    command: command.into(),
+                }
+            }
+            SessionError::ViewerAlreadyConnected => {
+                BridgeError::ViewerAlreadyConnected
+            }
             SessionError::SessionEnded => BridgeError::SessionEnded,
         }
     }
@@ -219,9 +237,14 @@ impl GreenfieldSession {
 
     /// Creates a session from stable u8 wire codes (seam compatibility).
     #[uniffi::constructor]
-    pub fn from_codes(role_code: u8, mode_code: u8) -> Result<Arc<Self>, BridgeError> {
-        let role = CoreRole::from_code(role_code).ok_or(BridgeError::UnknownRoleCode { code: role_code })?;
-        let mode = CoreMode::from_code(mode_code).ok_or(BridgeError::UnknownModeCode { code: mode_code })?;
+    pub fn from_codes(
+        role_code: u8,
+        mode_code: u8,
+    ) -> Result<Arc<Self>, BridgeError> {
+        let role = CoreRole::from_code(role_code)
+            .ok_or(BridgeError::UnknownRoleCode { code: role_code })?;
+        let mode = CoreMode::from_code(mode_code)
+            .ok_or(BridgeError::UnknownModeCode { code: mode_code })?;
         let session = Session::new(role, mode);
         Ok(Arc::new(Self {
             inner: Mutex::new(session),
@@ -230,51 +253,92 @@ impl GreenfieldSession {
 
     /// Current role.
     pub fn role(&self) -> Role {
-        self.inner.lock().expect("session lock poisoned").role().into()
+        self.inner
+            .lock()
+            .expect("session lock poisoned")
+            .role()
+            .into()
     }
 
     /// Current connection mode.
     pub fn mode(&self) -> ConnectionMode {
-        self.inner.lock().expect("session lock poisoned").mode().into()
+        self.inner
+            .lock()
+            .expect("session lock poisoned")
+            .mode()
+            .into()
     }
 
     /// Current lifecycle state.
     pub fn state(&self) -> SessionState {
-        self.inner.lock().expect("session lock poisoned").state().into()
+        self.inner
+            .lock()
+            .expect("session lock poisoned")
+            .state()
+            .into()
     }
 
     /// Whether viewer has been approved.
     pub fn viewer_approved(&self) -> bool {
-        self.inner.lock().expect("session lock poisoned").viewer_approved()
+        self.inner
+            .lock()
+            .expect("session lock poisoned")
+            .viewer_approved()
     }
 
     /// Applies a typed command, returning new state.
-    pub fn apply(&self, command: SessionCommand) -> Result<SessionState, BridgeError> {
-        let mut guard = self.inner.lock().expect("session lock poisoned");
+    pub fn apply(
+        &self,
+        command: SessionCommand,
+    ) -> Result<SessionState, BridgeError> {
+        let mut guard = self
+            .inner
+            .lock()
+            .expect("session lock poisoned");
         let state = guard.apply(command.into())?;
         Ok(state.into())
     }
 
     /// Stable role code (seam compat).
     pub fn role_code(&self) -> u8 {
-        self.inner.lock().expect("session lock poisoned").role().code()
+        self.inner
+            .lock()
+            .expect("session lock poisoned")
+            .role()
+            .code()
     }
 
     /// Stable connection-mode code (seam compat).
     pub fn connection_mode_code(&self) -> u8 {
-        self.inner.lock().expect("session lock poisoned").mode().code()
+        self.inner
+            .lock()
+            .expect("session lock poisoned")
+            .mode()
+            .code()
     }
 
     /// Stable state code (seam compat).
     pub fn state_code(&self) -> u8 {
-        self.inner.lock().expect("session lock poisoned").state().code()
+        self.inner
+            .lock()
+            .expect("session lock poisoned")
+            .state()
+            .code()
     }
 
     /// Applies a command given as stable u8 wire code (seam compat).
-    pub fn send_command(&self, command_code: u8) -> Result<u8, BridgeError> {
+    pub fn send_command(
+        &self,
+        command_code: u8,
+    ) -> Result<u8, BridgeError> {
         let command = CoreCommand::from_code(command_code)
-            .ok_or(BridgeError::UnknownCommandCode { code: command_code })?;
-        let mut guard = self.inner.lock().expect("session lock poisoned");
+            .ok_or(BridgeError::UnknownCommandCode {
+                code: command_code,
+            })?;
+        let mut guard = self
+            .inner
+            .lock()
+            .expect("session lock poisoned");
         let state = guard.apply(command)?;
         Ok(state.code())
     }
@@ -292,21 +356,25 @@ pub fn role_sender_code() -> u8 {
     CoreRole::Sender.code()
 }
 
+/// Viewer role wire code.
 #[uniffi::export]
 pub fn role_viewer_code() -> u8 {
     CoreRole::Viewer.code()
 }
 
+/// Local mode wire code.
 #[uniffi::export]
 pub fn mode_local_code() -> u8 {
     CoreMode::Local.code()
 }
 
+/// Direct mode wire code.
 #[uniffi::export]
 pub fn mode_direct_code() -> u8 {
     CoreMode::Direct.code()
 }
 
+/// Internet mode wire code.
 #[uniffi::export]
 pub fn mode_internet_code() -> u8 {
     CoreMode::Internet.code()
@@ -318,7 +386,8 @@ mod tests {
 
     #[test]
     fn new_session_via_uniffi_api_starts_idle() {
-        let session = GreenfieldSession::new(Role::Sender, ConnectionMode::Internet);
+        let session =
+            GreenfieldSession::new(Role::Sender, ConnectionMode::Internet);
         assert_eq!(session.role(), Role::Sender);
         assert_eq!(session.mode(), ConnectionMode::Internet);
         assert_eq!(session.state(), SessionState::Idle);
@@ -327,13 +396,16 @@ mod tests {
 
     #[test]
     fn typed_apply_journey_reaches_active() {
-        let session = GreenfieldSession::new(Role::Sender, ConnectionMode::Local);
+        let session =
+            GreenfieldSession::new(Role::Sender, ConnectionMode::Local);
         assert_eq!(
             session.apply(SessionCommand::StartPairing).unwrap(),
             SessionState::AwaitingPeer
         );
         assert_eq!(
-            session.apply(SessionCommand::PeerRequestedJoin).unwrap(),
+            session
+                .apply(SessionCommand::PeerRequestedJoin)
+                .unwrap(),
             SessionState::AwaitingApproval
         );
         assert_eq!(
@@ -358,8 +430,11 @@ mod tests {
 
     #[test]
     fn bridge_error_maps_role_mismatch() {
-        let session = GreenfieldSession::new(Role::Viewer, ConnectionMode::Local);
-        let err = session.apply(SessionCommand::ApproveViewer).unwrap_err();
+        let session =
+            GreenfieldSession::new(Role::Viewer, ConnectionMode::Local);
+        let err = session
+            .apply(SessionCommand::ApproveViewer)
+            .unwrap_err();
         assert_eq!(
             err,
             BridgeError::RoleMismatch {

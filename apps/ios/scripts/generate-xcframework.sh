@@ -19,7 +19,7 @@ echo "GEN_DIR=$GEN_DIR"
 # Ensure generated Swift bindings exist (from previous step)
 if [ ! -f "$GEN_DIR/greenfield5.swift" ]; then
   echo "Swift bindings not found at $GEN_DIR/greenfield5.swift — listing:"
-  ls -R "$GEN_DIR" || true
+  find "$GEN_DIR" -type f | head -n 100 || true
   # Fallback: generate again if possible
   if [ -f "$CORE_DIR/target/release/libgreenfield5_core.dylib" ]; then
     (cd "$CORE_DIR" && cargo run --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.dylib --language swift --out-dir "$GEN_DIR")
@@ -125,6 +125,6 @@ else
 fi
 
 echo "XCFramework generation done, listing:"
-ls -R "$GEN_DIR" | head -n 100
+find "$GEN_DIR" -type f | head -n 100 || true
 
 echo "Done"

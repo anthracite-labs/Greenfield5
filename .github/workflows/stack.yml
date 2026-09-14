@@ -130,7 +130,7 @@ jobs:
           cargo ndk --version
 
       - name: Set up Android NDK
-        uses: android-actions/setup-android@4dc3d59d95d67dcd800aeee9341a00d3f7d6548 # v3.2.2
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
         with:
           packages: ndk;28.0.12916984
 

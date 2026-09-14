@@ -13,7 +13,7 @@ name = "greenfield5_core"
 # Pinned FFI mechanism: UniFFI 0.32.1 (latest stable 2026-06-30 per mozilla/uniffi-rs tags v0.32.1 35a47433, v0.32.0 5c7b739)
 # Primary-source evidence: gh api repos/mozilla/uniffi-rs/tags, README, user guide (Kotlin/Swift bindings, scaffolding)
 [dependencies]
-uniffi = { version = "0.32.1" }
+uniffi = { version = "0.32.1", features = ["cli"] }
 thiserror = "2"
 
 [[bin]]
