@@ -1,0 +1,80 @@
+# Stack CI for the application tree (ADR-0006).
+#
+# Runs ALONGSIDE — never instead of — the foundation gate in verify.yml.
+# The required status contexts stay exactly the two defined in
+# config/main-ruleset.json ("Foundation gate", "Independent checks"); this
+# workflow is deliberately non-required until the stack stabilizes
+# (ADR-0006 follow-up 8). iOS has no job here: macOS-runner CI is a recorded
+# follow-up, and the project files are validated structurally instead.
+name: Stack
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - core/**
+      - apps/android/**
+      - .github/workflows/stack.yml
+  pull_request:
+    paths:
+      - core/**
+      - apps/android/**
+      - .github/workflows/stack.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stack-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-core:
+    name: Rust core
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      # core/rust-toolchain.toml pins the exact toolchain (1.98.1) and
+      # components; the runner's rustup installs it on first use. No
+      # third-party toolchain action means no extra supply-chain surface.
+      - name: Show pinned toolchain
+        run: |
+          rustup show
+          cargo --version
+          rustc --version
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Lint
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Test
+        run: cargo test
+
+  android-shell:
+    name: Android shell
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # The wrapper properties pin Gradle 9.6.1 with its SHA-256 checksum;
+      # AGP 9.4.0 / Kotlin 2.4.20 pins live in gradle/libs.versions.toml.
+      - name: Unit tests and debug assembly
+        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace --no-daemon
