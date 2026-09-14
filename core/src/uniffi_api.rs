@@ -307,9 +307,8 @@ impl GreenfieldSession {
 
     /// Applies a command given as stable u8 wire code (seam compat).
     pub fn send_command(&self, command_code: u8) -> Result<u8, BridgeError> {
-        let command = CoreCommand::from_code(command_code).ok_or(BridgeError::UnknownCommandCode {
-            code: command_code,
-        })?;
+        let command = CoreCommand::from_code(command_code)
+            .ok_or(BridgeError::UnknownCommandCode { code: command_code })?;
         let mut guard = self.inner.lock().expect("session lock poisoned");
         let state = guard.apply(command)?;
         Ok(state.code())
