@@ -467,16 +467,22 @@ mod tests {
 
     #[test]
     fn end_is_allowed_from_every_non_ended_state() {
-        let mut states: Vec<Session> = Vec::new();
-        states.push(sender_in(ConnectionMode::Local)); // Idle
-        states.push(pairing_sender()); // AwaitingPeer
-        states.push(sender_with_waiting_viewer()); // AwaitingApproval
-        states.push(active_sender()); // Active
         let mut interrupted = active_sender();
         interrupted
             .apply(SessionCommand::CaptureStopped)
             .expect("interrupt an active session");
-        states.push(interrupted); // SharingInterrupted
+        let states = vec![
+            // Idle
+            sender_in(ConnectionMode::Local),
+            // AwaitingPeer
+            pairing_sender(),
+            // AwaitingApproval
+            sender_with_waiting_viewer(),
+            // Active
+            active_sender(),
+            // SharingInterrupted
+            interrupted,
+        ];
 
         for mut s in states {
             assert_eq!(s.apply(SessionCommand::End), Ok(SessionState::Ended));
