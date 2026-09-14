@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex};
 
 use crate::seam::CoreError;
 use crate::session::{
-    ConnectionMode as CoreMode, Role as CoreRole, Session,
-    SessionCommand as CoreCommand, SessionError, SessionState as CoreState,
+    ConnectionMode as CoreMode, Role as CoreRole, Session, SessionCommand as CoreCommand,
+    SessionError, SessionState as CoreState,
 };
 
 /// Role of this device in a one-sender/one-viewer session.
@@ -178,15 +178,9 @@ pub enum BridgeError {
 impl From<CoreError> for BridgeError {
     fn from(e: CoreError) -> Self {
         match e {
-            CoreError::UnknownRoleCode(code) => {
-                BridgeError::UnknownRoleCode { code }
-            }
-            CoreError::UnknownModeCode(code) => {
-                BridgeError::UnknownModeCode { code }
-            }
-            CoreError::UnknownCommandCode(code) => {
-                BridgeError::UnknownCommandCode { code }
-            }
+            CoreError::UnknownRoleCode(code) => BridgeError::UnknownRoleCode { code },
+            CoreError::UnknownModeCode(code) => BridgeError::UnknownModeCode { code },
+            CoreError::UnknownCommandCode(code) => BridgeError::UnknownCommandCode { code },
             CoreError::Session(se) => se.into(),
         }
     }
@@ -195,20 +189,14 @@ impl From<CoreError> for BridgeError {
 impl From<SessionError> for BridgeError {
     fn from(e: SessionError) -> Self {
         match e {
-            SessionError::RoleMismatch { expected } => {
-                BridgeError::RoleMismatch {
-                    expected: expected.into(),
-                }
-            }
-            SessionError::InvalidTransition { state, command } => {
-                BridgeError::InvalidTransition {
-                    state: state.into(),
-                    command: command.into(),
-                }
-            }
-            SessionError::ViewerAlreadyConnected => {
-                BridgeError::ViewerAlreadyConnected
-            }
+            SessionError::RoleMismatch { expected } => BridgeError::RoleMismatch {
+                expected: expected.into(),
+            },
+            SessionError::InvalidTransition { state, command } => BridgeError::InvalidTransition {
+                state: state.into(),
+                command: command.into(),
+            },
+            SessionError::ViewerAlreadyConnected => BridgeError::ViewerAlreadyConnected,
             SessionError::SessionEnded => BridgeError::SessionEnded,
         }
     }
@@ -237,10 +225,7 @@ impl GreenfieldSession {
 
     /// Creates a session from stable u8 wire codes (seam compatibility).
     #[uniffi::constructor]
-    pub fn from_codes(
-        role_code: u8,
-        mode_code: u8,
-    ) -> Result<Arc<Self>, BridgeError> {
+    pub fn from_codes(role_code: u8, mode_code: u8) -> Result<Arc<Self>, BridgeError> {
         let role = CoreRole::from_code(role_code)
             .ok_or(BridgeError::UnknownRoleCode { code: role_code })?;
         let mode = CoreMode::from_code(mode_code)
@@ -287,14 +272,8 @@ impl GreenfieldSession {
     }
 
     /// Applies a typed command, returning new state.
-    pub fn apply(
-        &self,
-        command: SessionCommand,
-    ) -> Result<SessionState, BridgeError> {
-        let mut guard = self
-            .inner
-            .lock()
-            .expect("session lock poisoned");
+    pub fn apply(&self, command: SessionCommand) -> Result<SessionState, BridgeError> {
+        let mut guard = self.inner.lock().expect("session lock poisoned");
         let state = guard.apply(command.into())?;
         Ok(state.into())
     }
@@ -327,18 +306,11 @@ impl GreenfieldSession {
     }
 
     /// Applies a command given as stable u8 wire code (seam compat).
-    pub fn send_command(
-        &self,
-        command_code: u8,
-    ) -> Result<u8, BridgeError> {
-        let command = CoreCommand::from_code(command_code)
-            .ok_or(BridgeError::UnknownCommandCode {
-                code: command_code,
-            })?;
-        let mut guard = self
-            .inner
-            .lock()
-            .expect("session lock poisoned");
+    pub fn send_command(&self, command_code: u8) -> Result<u8, BridgeError> {
+        let command = CoreCommand::from_code(command_code).ok_or(BridgeError::UnknownCommandCode {
+            code: command_code,
+        })?;
+        let mut guard = self.inner.lock().expect("session lock poisoned");
         let state = guard.apply(command)?;
         Ok(state.code())
     }
@@ -386,8 +358,7 @@ mod tests {
 
     #[test]
     fn new_session_via_uniffi_api_starts_idle() {
-        let session =
-            GreenfieldSession::new(Role::Sender, ConnectionMode::Internet);
+        let session = GreenfieldSession::new(Role::Sender, ConnectionMode::Internet);
         assert_eq!(session.role(), Role::Sender);
         assert_eq!(session.mode(), ConnectionMode::Internet);
         assert_eq!(session.state(), SessionState::Idle);
@@ -396,16 +367,13 @@ mod tests {
 
     #[test]
     fn typed_apply_journey_reaches_active() {
-        let session =
-            GreenfieldSession::new(Role::Sender, ConnectionMode::Local);
+        let session = GreenfieldSession::new(Role::Sender, ConnectionMode::Local);
         assert_eq!(
             session.apply(SessionCommand::StartPairing).unwrap(),
             SessionState::AwaitingPeer
         );
         assert_eq!(
-            session
-                .apply(SessionCommand::PeerRequestedJoin)
-                .unwrap(),
+            session.apply(SessionCommand::PeerRequestedJoin).unwrap(),
             SessionState::AwaitingApproval
         );
         assert_eq!(
@@ -430,11 +398,8 @@ mod tests {
 
     #[test]
     fn bridge_error_maps_role_mismatch() {
-        let session =
-            GreenfieldSession::new(Role::Viewer, ConnectionMode::Local);
-        let err = session
-            .apply(SessionCommand::ApproveViewer)
-            .unwrap_err();
+        let session = GreenfieldSession::new(Role::Viewer, ConnectionMode::Local);
+        let err = session.apply(SessionCommand::ApproveViewer).unwrap_err();
         assert_eq!(
             err,
             BridgeError::RoleMismatch {
