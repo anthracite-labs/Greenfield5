@@ -50,13 +50,43 @@ jobs:
           rustc --version
 
       - name: Format
-        run: cargo fmt --check
+        run: |
+          set -euo pipefail
+          if ! cargo fmt --check >/tmp/fmt.diff 2>&1; then
+            {
+              echo '### `cargo fmt --check` diff'
+              echo '```diff'
+              cat /tmp/fmt.diff
+              echo '```'
+            } >>"$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       - name: Lint
-        run: cargo clippy --all-targets -- -D warnings
+        run: |
+          set -euo pipefail
+          if ! cargo clippy --all-targets -- -D warnings >/tmp/clippy.txt 2>&1; then
+            {
+              echo '### `cargo clippy` findings'
+              echo '```text'
+              tail -n 200 /tmp/clippy.txt
+              echo '```'
+            } >>"$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
       - name: Test
-        run: cargo test
+        run: |
+          set -euo pipefail
+          if ! cargo test >/tmp/test.txt 2>&1; then
+            {
+              echo '### `cargo test` output'
+              echo '```text'
+              tail -n 200 /tmp/test.txt
+              echo '```'
+            } >>"$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
   android-shell:
     name: Android shell
