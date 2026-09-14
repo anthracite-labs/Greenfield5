@@ -21,19 +21,36 @@
 //! decided in that follow-up — can export this surface without UI code ever
 //! depending on Rust types or transport internals.
 //!
+//! # UniFFI bridge (ADR-0007)
+//!
+//! [`uniffi_api`] exposes the same session model via UniFFI proc-macros,
+//! pinned at 0.32.1 (mozilla/uniffi-rs tags v0.32.1 35a47433, v0.32.0 5c7b739).
+//! The existing [`seam`] remains the stable u8-code contract; the UniFFI
+//! layer delegates to it and does not expand session semantics.
+//!
 //! # Verification
 //!
 //! `cargo test` (toolchain pinned by `rust-toolchain.toml`); CI runs
 //! `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` in
 //! `.github/workflows/stack.yml`.
 
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 #![deny(missing_docs)]
 
 pub mod seam;
 pub mod session;
+pub mod uniffi_api;
 
 /// The crate version, as compiled in (`CARGO_PKG_VERSION`).
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
+}
+
+// UniFFI scaffolding — proc-macro only, no UDL. The macro generates unsafe FFI
+// shims, so we allow unsafe_code for this expansion only. Our own code remains
+// denied via the crate-level deny above.
+#[allow(unsafe_code)]
+#[allow(missing_docs)]
+mod uniffi_scaffolding {
+    uniffi::setup_scaffolding!();
 }

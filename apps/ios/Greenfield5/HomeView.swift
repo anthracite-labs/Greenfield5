@@ -23,6 +23,9 @@ struct HomeView: View {
             }
             .buttonStyle(.bordered)
             .frame(maxWidth: .infinity)
+            Text("core \(GreenfieldRustBridge.getCoreVersion()) • bridge \(GreenfieldRustBridge.isRustLibraryPresent() ? "rust" : "stub")")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .padding(24)
     }

@@ -1,11 +1,11 @@
-# Stack CI for the application tree (ADR-0006).
+# Stack CI for the application tree (ADR-0006, ADR-0007).
 #
 # Runs ALONGSIDE — never instead of — the foundation gate in verify.yml.
 # The required status contexts stay exactly the two defined in
 # config/main-ruleset.json ("Foundation gate", "Independent checks"); this
 # workflow is deliberately non-required until the stack stabilizes
-# (ADR-0006 follow-up 8). iOS has no job here: macOS-runner CI is a recorded
-# follow-up, and the project files are validated structurally instead.
+# (ADR-0006 follow-up 8). iOS job added in Issue #15 to provide honest
+# verification for the native↔Rust bridge.
 name: Stack
 
 on:
@@ -14,11 +14,13 @@ on:
     paths:
       - core/**
       - apps/android/**
+      - apps/ios/**
       - .github/workflows/stack.yml
   pull_request:
     paths:
       - core/**
       - apps/android/**
+      - apps/ios/**
       - .github/workflows/stack.yml
   workflow_dispatch:
 
@@ -114,7 +116,114 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Show Rust toolchain (for UniFFI bridge)
+        working-directory: core
+        run: |
+          rustup show
+          cargo --version
+          rustc --version
+
+      - name: Install cargo-ndk
+        working-directory: core
+        run: |
+          cargo install cargo-ndk --version 3.5.4 --locked || cargo install cargo-ndk --locked
+          cargo ndk --version
+
+      - name: Set up Android NDK
+        uses: android-actions/setup-android@4dc3d59d95d67dcd800aeee9341a00d3f7d6548 # v3.2.2
+        with:
+          packages: ndk;28.0.12916984
+
+      - name: Build Rust core for Android (arm64 + x86_64 for CI)
+        working-directory: core
+        env:
+          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/28.0.12916984
+        run: |
+          set -euo pipefail
+          rustup target add aarch64-linux-android x86_64-linux-android
+          cargo ndk -t arm64-v8a -t x86_64 --platform 29 -o ../apps/android/app/src/main/jniLibs build --release
+          ls -R ../apps/android/app/src/main/jniLibs
+
+      - name: Generate Kotlin bindings via UniFFI
+        working-directory: core
+        run: |
+          set -euo pipefail
+          cargo build --release
+          # Generate Kotlin bindings from cdylib
+          cargo run --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.so --language kotlin --out-dir ../apps/android/app/src/main/java/
+          ls -R ../apps/android/app/src/main/java/uniffi || true
+          # Also generate for verification that files exist
+          echo "Generated Kotlin bindings:"
+          find ../apps/android/app/src/main/java/uniffi -type f | head -n 20
+
       # The wrapper properties pin Gradle 9.6.1 with its SHA-256 checksum;
       # AGP 9.4.0 / Kotlin 2.4.20 pins live in gradle/libs.versions.toml.
-      - name: Unit tests and debug assembly
+      - name: Unit tests and debug assembly (with Rust bridge)
         run: ./gradlew testDebugUnitTest assembleDebug --stacktrace --no-daemon
+
+      - name: Release assembly (proves R8 keep rules)
+        run: ./gradlew assembleRelease --stacktrace --no-daemon
+
+  ios-shell:
+    name: iOS shell
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Show Xcode version
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version || true
+          swift --version
+
+      - name: Show Rust toolchain (for UniFFI bridge)
+        working-directory: core
+        run: |
+          rustup show
+          cargo --version
+          rustc --version
+
+      - name: Install Rust iOS targets
+        working-directory: core
+        run: |
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios-sim
+
+      - name: Build Rust core for iOS (staticlib)
+        working-directory: core
+        run: |
+          set -euo pipefail
+          cargo build --release --target aarch64-apple-ios
+          cargo build --release --target aarch64-apple-ios-sim
+          cargo build --release --target x86_64-apple-ios-sim
+          ls -lh target/*/release/libgreenfield5_core.a
+
+      - name: Generate Swift bindings via UniFFI
+        working-directory: core
+        run: |
+          set -euo pipefail
+          # Generate Swift bindings from cdylib (host)
+          cargo build --release
+          cargo run --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.dylib --language swift --out-dir ../apps/ios/Greenfield5/Bridge/Generated/
+          ls -R ../apps/ios/Greenfield5/Bridge/Generated/
+
+      - name: Generate XCFramework
+        working-directory: apps/ios
+        run: |
+          set -euo pipefail
+          chmod +x scripts/generate-xcframework.sh || true
+          ./scripts/generate-xcframework.sh || bash scripts/generate-xcframework.sh
+          ls -R Greenfield5/Bridge/Generated/ | head -n 100
+
+      - name: Build iOS app (simulator)
+        run: |
+          set -euo pipefail
+          xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' -configuration Debug build CODE_SIGNING_ALLOWED=NO | tail -n 100
+
+      - name: Run iOS tests
+        run: |
+          set -euo pipefail
+          xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' -configuration Debug CODE_SIGNING_ALLOWED=NO | tail -n 200

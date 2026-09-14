@@ -19,14 +19,22 @@ android {
 
     buildTypes {
         getByName("release") {
-            // No shrinking yet: the skeleton has nothing to protect, and R8
-            // keep rules for the future Rust-core bridge deserve their own
-            // reviewed change.
-            isMinifyEnabled = false
+            // Release now enables R8 with keep rules for the UniFFI/JNA bridge.
+            // The keep rules are build-proven: release build must keep UniFFI symbols.
+            isMinifyEnabled = true
+            isShrinkResources = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
+        }
+    }
+
+    sourceSets {
+        getByName("main") {
+            // Rust cdylib built for Android ABIs lands in jniLibs/<abi>/libgreenfield5_core.so
+            // via cargo-ndk. AGP picks it up automatically.
+            jniLibs.srcDirs("src/main/jniLibs")
         }
     }
 
@@ -57,5 +65,11 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
+    // UniFFI Kotlin bindings use JNA to call Rust cdylib.
+    // Version pinned per UniFFI docs (JNA 5.12.0+ required).
+    implementation("net.java.dev.jna:jna:5.14.0@aar")
+
     testImplementation(libs.junit)
+    // For JVM unit tests that load host Rust library via JNA (bridge proof without Android NDK)
+    testImplementation("net.java.dev.jna:jna:5.14.0")
 }

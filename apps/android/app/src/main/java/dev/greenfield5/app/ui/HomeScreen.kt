@@ -18,6 +18,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import dev.greenfield5.app.R
+import dev.greenfield5.app.bridge.GreenfieldRustBridge
 import dev.greenfield5.app.ui.theme.Greenfield5Theme
 
 /**
@@ -59,6 +60,11 @@ fun HomeScreen(
             ) {
                 Text(stringResource(R.string.action_view_a_screen))
             }
+            Text(
+                text = "core ${GreenfieldRustBridge.coreVersion()} • bridge ${if (GreenfieldRustBridge.isLibraryLoaded()) "rust" else "stub"}",
+                style = MaterialTheme.typography.labelSmall,
+                textAlign = TextAlign.Center,
+            )
         }
     }
 }

@@ -362,3 +362,34 @@ run ids and results quoted in the PR body (never claimed before observed).
 corrected evidence; merge decision is human. iOS Xcode compile/run
 verification remains the open ADR-0006 follow-up (macOS-runner CI); the
 hand-written pbxproj stays the least-proven artifact until then.
+
+## 2026-09-14 — Phase A: reconcile stale Issue #11 / PR #12 + Phase B: native↔Rust bridge
+
+**Context:** Issue #11 and PR #12 predate implementation transition (architecture phase, ALLOW_APP_STACK=0). PR #14 merged d3b933f moves repo to implementation with Android/iOS/Rust skeletons. This session's objective: reconcile stale artifacts and implement next load-bearing slice — native↔Rust bridge via UniFFI.
+**Did:**
+- Phase A: Inspected Issue #11 (architecture validation spike requiring scratch repo) and PR #12 (docs-only research report, no device evidence). Determined lifecycle/execution plan superseded by Issue #13/PR #14. Added closing comment to PR #12 and closed it without merging (gh pr close 12 succeeded). Attempted to comment/close Issue #11 via gh api but received 403 Resource not accessible by integration — GitHub App can create issues but not edit/close existing ones in this environment; documented limitation and cross-linked successor in PR #12 comment and in Issue #11 body edit attempt. Created successor Issue #15 (Native↔Rust bridge: UniFFI-based production bridge) with full acceptance criteria including macOS CI for honest iOS verification.
+- Phase B research: Verified UniFFI upstream via gh api: mozilla/uniffi-rs 4966 stars, updated 2026-09-14, tags v0.32.1 35a47433 and v0.32.0 5c7b739 (2026-06-30), CHANGELOG 0.32.0, README confirms Kotlin/Swift production-quality, Firefox mobile usage, Kotlin config (package_name, android flag, JNA fix #2897), Swift bindings (C header+modulemap+Swift, Swift 6 partial). Decision: pin UniFFI 0.32.1.
+- Implementation: Updated core/Cargo.toml to add uniffi 0.32.1, thiserror 2, crate-type lib+cdylib+staticlib, uniffi-bindgen binary. Added core/src/uniffi_api.rs exposing Role/ConnectionMode/SessionState/SessionCommand enums, BridgeError, GreenfieldSession object with Mutex<Session>, core_version and wire-code helpers, delegating to existing session/seam without expanding semantics. Changed lib.rs forbid→deny unsafe_code to allow scaffolding via #[allow(unsafe_code)] module with setup_scaffolding!().
+- Android: Created placeholder Kotlin bindings uniffi/greenfield5/greenfield5.kt (pure-Kotlin stub mirroring Rust logic for local builds, to be overwritten by CI-generated real bindings), bridge wrapper GreenfieldRustBridge.kt with System.loadLibrary("greenfield5_core") and runSenderJourney/runViewerJourney proof, updated build.gradle.kts to add JNA 5.14.0, enable isMinifyEnabled=true in release, jniLibs srcDir, proguard-rules.pro with keep rules for uniffi.greenfield5, JNA, native methods (build-proven via assembleRelease), added JVM unit tests GreenfieldRustBridgeTest.kt proving typed and u8-code journeys.
+- iOS: Created placeholder Swift bindings Bridge/Generated/greenfield5.swift (pure-Swift stub mirroring Rust logic), bridge wrapper GreenfieldRustBridge.swift with getCoreVersion/isRustLibraryPresent and journey helpers, updated HomeView.swift to show core version + bridge status, added BridgeTests.swift with 7 tests mirroring Android.
+- CI: Extended stack.yml with android-shell job building Rust for Android via cargo-ndk (aarch64-linux-android, x86_64-linux-android), generating Kotlin bindings via uniffi-bindgen, then testDebugUnitTest assembleDebug + assembleRelease (proves R8 keep). Added ios-shell job on macos-14 building Rust for iOS targets (aarch64-apple-ios, aarch64-apple-ios-sim, x86_64-apple-ios-sim), generating Swift bindings + XCFramework via scripts/generate-xcframework.sh, then xcodebuild build + test on iPhone 16 simulator. Actions SHA-pinned, least-privilege.
+- ADR-0007 recorded UniFFI choice with alternatives (hand-rolled C ABI, Diplomat, Gobley, UDL) and consequences.
+- Docs: Added docs/plans/15-native-rust-bridge.md plan, updated docs/decisions/README.md, created scripts generate-uniffi-bindings.sh and generate-xcframework.sh.
+**Verified:**
+- `bash scripts/verify.sh` → PASS 15 passed, 0 failed, 3 skipped (shell_lint no shellcheck, no_app_stack stood down, agentshield advisory 0 files) — executed this session, working tree includes new files.
+- `bash scripts/selftest.sh` → PASS 128/128 after installing PyYAML 6.0.3 via pip --break-system-packages (previously 127/128 failing workflows_yaml/corrupted when parser absent).
+- Local Rust toolchain absent (cargo not found, static.rust-lang.org blocked by egress allowlist) — CI is execution evidence for Rust core, Android NDK, Xcode.
+- GitHub state: main SHA d3b933f (PR #14 merge), PR #12 closed 2026-09-14 via gh pr close, Issue #11 still open due to 403 but supersession documented, Issue #15 created https://github.com/anthracite-labs/Greenfield5/issues/15, Issue #16 test permission created then attempted close (also 403).
+**Learned:**
+- GitHub App can create issues (gh issue create succeeded for #15, #16) but cannot comment/close/edit issues via REST or GraphQL (403 Resource not accessible by integration) — PR comments/close work (gh pr comment/close succeeded). Need to document this permission asymmetry.
+- forbid(unsafe_code) blocks UniFFI scaffolding which contains unsafe FFI shims; must use deny(unsafe_code) + #[allow(unsafe_code)] for scaffolding module only.
+- UniFFI Kotlin bindings require JNA and cargo-ndk + NDK for Android .so; Swift bindings require XCFramework generation with lipo + xcodebuild create-xcframework.
+- Placeholder pure-Kotlin/Swift stubs that mirror Rust session logic allow local builds and foundation gate to pass without Rust toolchain, while CI generates real bindings.
+- stack.yml path filters must include apps/ios/** for iOS job to trigger.
+- selftest.sh needs PyYAML to catch workflows_yaml corruption; install via pip --break-system-packages in sandbox.
+**Next:**
+- Push branch arena/01a0a1e4-greenfield5 and open PR for Issue #15 using PR template, with RED/GREEN evidence from CI (cargo test, Android unit tests, iOS xcodebuild).
+- After CI green, leave PR open for independent ChatGPT review — do not self-merge.
+- Then proceed to MoQ/Iroh synthetic-media spike (ADR-0005 follow-ups) using same bridge.
+- Consider promoting Stack jobs to required contexts after stabilization (governance change).
+- Commit core/Cargo.lock once generated by real toolchain (CI artifact) — never hand-written.

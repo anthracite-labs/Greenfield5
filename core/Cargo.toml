@@ -6,7 +6,16 @@ rust-version = "1.98"
 description = "Shared Greenfield5 core: session role/state model and the narrow seam the native shells consume."
 publish = false
 
-# Zero external dependencies by design at this stage (ADR-0006): the session
-# model is pure std logic. MoQ/Iroh and any FFI mechanism arrive as pinned
-# dependencies in the bridge/transport follow-up work.
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+name = "greenfield5_core"
+
+# Pinned FFI mechanism: UniFFI 0.32.1 (latest stable 2026-06-30 per mozilla/uniffi-rs tags v0.32.1 35a47433, v0.32.0 5c7b739)
+# Primary-source evidence: gh api repos/mozilla/uniffi-rs/tags, README, user guide (Kotlin/Swift bindings, scaffolding)
 [dependencies]
+uniffi = { version = "0.32.1" }
+thiserror = "2"
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "uniffi-bindgen.rs"
