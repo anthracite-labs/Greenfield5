@@ -1,9 +1,12 @@
 # Architecture
 
-**Scope: the engineering system.** There is no application architecture here,
-because App-Factory contains no application (see [PRODUCT.md](PRODUCT.md)). A
-repository generated from this template records its own application
-architecture in this file once an ADR selects a stack.
+**Scope: the engineering system.** This file documents the foundation
+machinery only. The application's architecture is recorded in
+[ADR-0005](decisions/0005-rust-native-moq-iroh-architecture.md) (system
+shape) and [ADR-0006](decisions/0006-application-stack.md) (stack, pins,
+seam); the code lives in `apps/android/`, `apps/ios/`, and `core/`, with
+token-lean orientation maps under [codemaps/](codemaps/README.md). Product
+scope is [PRODUCT.md](PRODUCT.md).
 
 ## Operating model
 
@@ -67,7 +70,7 @@ branch → tests → PR → CI → ChatGPT review → merge
 | `docs/MEMORY.md` | Durable cross-session memory | Replace ADRs or PR descriptions |
 | `docs/decisions/` | Durable trade-off records | Track task state |
 | `docs/FACTORY.md` | Instantiation and admin checklist | Automate GitHub administration |
-| `scripts/verify.sh` | Deterministic quality gate | Test application behaviour (none exists) |
+| `scripts/verify.sh` | Deterministic quality gate | Test application behaviour (that is stack CI's job: `.github/workflows/stack.yml`) |
 | `scripts/selftest.sh` | Negative tests that prove the gate can fail | Modify the real working tree |
 | `scripts/init-project.sh` | One-time, non-destructive project identity setup | Commit, push, or change GitHub settings |
 | `scripts/bootstrap.sh` | Session briefing from repository state | Mutate anything |

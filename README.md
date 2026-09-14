@@ -7,17 +7,22 @@ with **Arena Agent Mode** under **ECC** discipline and **ChatGPT** review.
 
 **Foundation version:** see [`FOUNDATION_VERSION`](FOUNDATION_VERSION) — `0.1.0`.
 
-This repository is the reusable template source. It contains **no application**:
-no framework, no database, no auth scheme, no hosting target, no UI, and no
-product definition. That is the point. What it ships is the machinery that makes
-those decisions disciplined when they are eventually made.
+This repository was instantiated from the reusable App-Factory template and is
+now the **Greenfield5** product repository (`PROJECT_PHASE=implementation`).
+The application skeleton — Android shell, iOS shell, shared Rust core — lives
+in [`apps/`](apps/) and [`core/`](core/), chosen and pinned by
+[ADR-0006](docs/decisions/0006-application-stack.md) on top of the accepted
+architecture in [ADR-0005](docs/decisions/0005-rust-native-moq-iroh-architecture.md).
+The foundation machinery below is unchanged and still governs every commit;
+the no-stack guard stood down only through its own validated, ADR-backed
+transition path.
 
 ## What you get
 
 | | |
 | :-- | :-- |
 | **ECC-on-Arena adapter** | Engineering rules, 10 on-demand workflows, 3 review personas, adapted from ECC v2.2.0 (MIT), fully attributed. Not native ECC. |
-| **Deterministic gate** | `scripts/verify.sh` — 17 committed checks, non-zero on failure, re-run independently in CI. |
+| **Deterministic gate** | `scripts/verify.sh` — 18 committed checks, non-zero on failure, re-run independently in CI. |
 | **Negative tests** | `scripts/selftest.sh` — injects faults into a throwaway copy and asserts the gate rejects each one. A gate that only ever passes proves nothing. |
 | **Lifecycle state** | `config/project.env` — factory → discovery → architecture → implementation, with a no-stack guard that stands down only via a reviewed, ADR-backed transition. |
 | **Portable governance** | `config/main-ruleset.json` — a branch-protection payload with no instance ids, applicable to any new repository. |
@@ -91,6 +96,10 @@ docs/                      product, domain, architecture, roadmap, security, mem
 docs/decisions/            architecture decision records
 scripts/                   verify, selftest, bootstrap, init-project, sync-ecc
 .github/workflows/verify.yml   independent CI execution of the same gate
+.github/workflows/stack.yml    Rust core + Android shell CI (ADR-0006), non-required
+apps/android/              Greenfield5 Android shell (Kotlin + Compose, AGP 9)
+apps/ios/                  Greenfield5 iOS shell (Swift 6 + SwiftUI, Xcode project)
+core/                      greenfield5-core — shared Rust session/protocol core
 ```
 
 ## Quality gate
