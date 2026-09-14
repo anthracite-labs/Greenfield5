@@ -1,0 +1,13 @@
+# Xcode / SwiftPM user state and build output — never committed.
+xcuserdata/
+DerivedData/
+build/
+.DS_Store
+*.hmap
+*.ipa
+*.dSYM
+*.dSYM.zip
+*.moved-aside
+.swiftpm/
+*.xcscmblueprint
+*.xccheckout
