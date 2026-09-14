@@ -49,16 +49,22 @@ jobs:
           cargo --version
           rustc --version
 
+      # On failure each step publishes its output as a check-run annotation:
+      # annotations stay readable through api.github.com even where raw log
+      # blob storage is unreachable for a reviewer/agent. The heredoc body is
+      # flush-left on purpose (bash column 0, Python module level).
       - name: Format
         run: |
           set -euo pipefail
           if ! cargo fmt --check >/tmp/fmt.diff 2>&1; then
-            {
-              echo '### `cargo fmt --check` diff'
-              echo '```diff'
-              cat /tmp/fmt.diff
-              echo '```'
-            } >>"$GITHUB_STEP_SUMMARY"
+            python3 - /tmp/fmt.diff 'cargo fmt --check diff' <<'PY'
+          import sys
+          path, title = sys.argv[1], sys.argv[2]
+          data = open(path, 'rb').read().decode('utf-8', 'replace')[:60000]
+          enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          title_enc = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::error title={title_enc}::{enc}')
+          PY
             exit 1
           fi
 
@@ -66,12 +72,14 @@ jobs:
         run: |
           set -euo pipefail
           if ! cargo clippy --all-targets -- -D warnings >/tmp/clippy.txt 2>&1; then
-            {
-              echo '### `cargo clippy` findings'
-              echo '```text'
-              tail -n 200 /tmp/clippy.txt
-              echo '```'
-            } >>"$GITHUB_STEP_SUMMARY"
+            python3 - /tmp/clippy.txt 'cargo clippy findings' <<'PY'
+          import sys
+          path, title = sys.argv[1], sys.argv[2]
+          data = open(path, 'rb').read().decode('utf-8', 'replace')[-60000:]
+          enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          title_enc = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::error title={title_enc}::{enc}')
+          PY
             exit 1
           fi
 
@@ -79,12 +87,14 @@ jobs:
         run: |
           set -euo pipefail
           if ! cargo test >/tmp/test.txt 2>&1; then
-            {
-              echo '### `cargo test` output'
-              echo '```text'
-              tail -n 200 /tmp/test.txt
-              echo '```'
-            } >>"$GITHUB_STEP_SUMMARY"
+            python3 - /tmp/test.txt 'cargo test output' <<'PY'
+          import sys
+          path, title = sys.argv[1], sys.argv[2]
+          data = open(path, 'rb').read().decode('utf-8', 'replace')[-60000:]
+          enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          title_enc = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::error title={title_enc}::{enc}')
+          PY
             exit 1
           fi
 
