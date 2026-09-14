@@ -1,8 +1,8 @@
 # Codemap: core session model (`core/`)
 
-Describes the tree as of 2026-09-14 (issue #13 skeleton, pre-GREEN commit).
-All public function bodies are `todo!()` stubs until the implementation
-commit lands — types, codes, error precedence, and tests are the contract.
+Describes the tree as of 2026-09-14 (issue #13, GREEN implementation
+committed). Types, wire codes, error precedence, and the test suite are the
+committed contract; `Session::apply` is the only mutator.
 
 ## What this crate is
 

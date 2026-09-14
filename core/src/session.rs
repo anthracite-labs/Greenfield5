@@ -32,12 +32,16 @@ pub enum Role {
 impl Role {
     /// The stable wire code for this role.
     pub fn code(self) -> u8 {
-        todo!("GREEN commit: session model implementation")
+        self as u8
     }
 
     /// Decodes a wire code; unknown codes are rejected, never guessed.
     pub fn from_code(code: u8) -> Option<Self> {
-        todo!("GREEN commit: session model implementation")
+        match code {
+            0 => Some(Role::Sender),
+            1 => Some(Role::Viewer),
+            _ => None,
+        }
     }
 }
 
@@ -56,12 +60,17 @@ pub enum ConnectionMode {
 impl ConnectionMode {
     /// The stable wire code for this mode.
     pub fn code(self) -> u8 {
-        todo!("GREEN commit: session model implementation")
+        self as u8
     }
 
     /// Decodes a wire code; unknown codes are rejected, never guessed.
     pub fn from_code(code: u8) -> Option<Self> {
-        todo!("GREEN commit: session model implementation")
+        match code {
+            0 => Some(ConnectionMode::Local),
+            1 => Some(ConnectionMode::Direct),
+            2 => Some(ConnectionMode::Internet),
+            _ => None,
+        }
     }
 }
 
@@ -87,12 +96,20 @@ pub enum SessionState {
 impl SessionState {
     /// The stable wire code for this state.
     pub fn code(self) -> u8 {
-        todo!("GREEN commit: session model implementation")
+        self as u8
     }
 
     /// Decodes a wire code; unknown codes are rejected, never guessed.
     pub fn from_code(code: u8) -> Option<Self> {
-        todo!("GREEN commit: session model implementation")
+        match code {
+            0 => Some(SessionState::Idle),
+            1 => Some(SessionState::AwaitingPeer),
+            2 => Some(SessionState::AwaitingApproval),
+            3 => Some(SessionState::Active),
+            4 => Some(SessionState::SharingInterrupted),
+            5 => Some(SessionState::Ended),
+            _ => None,
+        }
     }
 }
 
@@ -125,12 +142,22 @@ pub enum SessionCommand {
 impl SessionCommand {
     /// The stable wire code for this command.
     pub fn code(self) -> u8 {
-        todo!("GREEN commit: session model implementation")
+        self as u8
     }
 
     /// Decodes a wire code; unknown codes are rejected, never guessed.
     pub fn from_code(code: u8) -> Option<Self> {
-        todo!("GREEN commit: session model implementation")
+        match code {
+            0 => Some(SessionCommand::StartPairing),
+            1 => Some(SessionCommand::RequestJoin),
+            2 => Some(SessionCommand::PeerRequestedJoin),
+            3 => Some(SessionCommand::ApproveViewer),
+            4 => Some(SessionCommand::ApprovalReceived),
+            5 => Some(SessionCommand::CaptureStarted),
+            6 => Some(SessionCommand::CaptureStopped),
+            7 => Some(SessionCommand::End),
+            _ => None,
+        }
     }
 }
 
@@ -162,7 +189,18 @@ pub enum SessionError {
 
 impl fmt::Display for SessionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!("GREEN commit: session model implementation")
+        match self {
+            SessionError::RoleMismatch { expected } => {
+                write!(f, "command requires the {expected:?} role")
+            }
+            SessionError::InvalidTransition { state, command } => {
+                write!(f, "{command:?} is not valid in state {state:?}")
+            }
+            SessionError::ViewerAlreadyConnected => {
+                write!(f, "a viewer is already connected; sessions are one-to-one")
+            }
+            SessionError::SessionEnded => write!(f, "the session has ended; Ended is terminal"),
+        }
     }
 }
 
@@ -182,37 +220,96 @@ pub struct Session {
 impl Session {
     /// Creates a session in [`SessionState::Idle`] for the given role and mode.
     pub fn new(role: Role, mode: ConnectionMode) -> Self {
-        todo!("GREEN commit: session model implementation")
+        Self {
+            role,
+            mode,
+            state: SessionState::Idle,
+            viewer_connected: false,
+            viewer_approved: false,
+        }
     }
 
     /// The role this device plays in the session.
     pub fn role(&self) -> Role {
-        todo!("GREEN commit: session model implementation")
+        self.role
     }
 
     /// The user-selected connection mode.
     pub fn mode(&self) -> ConnectionMode {
-        todo!("GREEN commit: session model implementation")
+        self.mode
     }
 
     /// The current lifecycle state.
     pub fn state(&self) -> SessionState {
-        todo!("GREEN commit: session model implementation")
+        self.state
     }
 
     /// Whether the sender has approved the viewer (PRODUCT.md §4).
     pub fn viewer_approved(&self) -> bool {
-        todo!("GREEN commit: session model implementation")
+        self.viewer_approved
     }
 
     /// Applies a command, returning the new state or the reason it was
     /// rejected. On error the session is unchanged.
+    ///
+    /// Check order implements the documented error precedence: the terminal
+    /// check first, then role, then the one-viewer rule, then state.
     pub fn apply(&mut self, command: SessionCommand) -> Result<SessionState, SessionError> {
-        todo!("GREEN commit: session model implementation")
+        if self.state == SessionState::Ended {
+            return Err(SessionError::SessionEnded);
+        }
+        let next = match command {
+            SessionCommand::End => SessionState::Ended,
+            SessionCommand::StartPairing => {
+                self.require_role(Role::Sender)?;
+                self.require_state(SessionState::Idle, command)?;
+                SessionState::AwaitingPeer
+            }
+            SessionCommand::RequestJoin => {
+                self.require_role(Role::Viewer)?;
+                self.require_state(SessionState::Idle, command)?;
+                SessionState::AwaitingApproval
+            }
+            SessionCommand::PeerRequestedJoin => {
+                self.require_role(Role::Sender)?;
+                if self.viewer_connected {
+                    return Err(SessionError::ViewerAlreadyConnected);
+                }
+                self.require_state(SessionState::AwaitingPeer, command)?;
+                self.viewer_connected = true;
+                SessionState::AwaitingApproval
+            }
+            SessionCommand::ApproveViewer => {
+                self.require_role(Role::Sender)?;
+                self.require_state(SessionState::AwaitingApproval, command)?;
+                self.viewer_approved = true;
+                SessionState::Active
+            }
+            SessionCommand::ApprovalReceived => {
+                self.require_role(Role::Viewer)?;
+                self.require_state(SessionState::AwaitingApproval, command)?;
+                self.viewer_approved = true;
+                SessionState::Active
+            }
+            SessionCommand::CaptureStarted => {
+                self.require_state(SessionState::SharingInterrupted, command)?;
+                SessionState::Active
+            }
+            SessionCommand::CaptureStopped => {
+                self.require_state(SessionState::Active, command)?;
+                SessionState::SharingInterrupted
+            }
+        };
+        self.state = next;
+        Ok(next)
     }
 
     fn require_role(&self, expected: Role) -> Result<(), SessionError> {
-        todo!("GREEN commit: session model implementation")
+        if self.role == expected {
+            Ok(())
+        } else {
+            Err(SessionError::RoleMismatch { expected })
+        }
     }
 
     fn require_state(
@@ -220,7 +317,14 @@ impl Session {
         expected: SessionState,
         command: SessionCommand,
     ) -> Result<(), SessionError> {
-        todo!("GREEN commit: session model implementation")
+        if self.state == expected {
+            Ok(())
+        } else {
+            Err(SessionError::InvalidTransition {
+                state: self.state,
+                command,
+            })
+        }
     }
 }
 

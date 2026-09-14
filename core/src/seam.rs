@@ -33,7 +33,12 @@ pub enum CoreError {
 
 impl fmt::Display for CoreError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!("GREEN commit: seam implementation")
+        match self {
+            CoreError::UnknownRoleCode(code) => write!(f, "unknown role code: {code}"),
+            CoreError::UnknownModeCode(code) => write!(f, "unknown connection-mode code: {code}"),
+            CoreError::UnknownCommandCode(code) => write!(f, "unknown command code: {code}"),
+            CoreError::Session(error) => write!(f, "session rejected the command: {error}"),
+        }
     }
 }
 
@@ -41,7 +46,7 @@ impl std::error::Error for CoreError {}
 
 impl From<SessionError> for CoreError {
     fn from(error: SessionError) -> Self {
-        todo!("GREEN commit: seam implementation")
+        CoreError::Session(error)
     }
 }
 
@@ -55,39 +60,50 @@ pub struct CoreSession {
 impl CoreSession {
     /// Starts a session from wire codes. Unknown codes are rejected.
     pub fn start(role_code: u8, mode_code: u8) -> Result<Self, CoreError> {
-        todo!("GREEN commit: seam implementation")
+        let role = Role::from_code(role_code)
+            .ok_or(CoreError::UnknownRoleCode(role_code))?;
+        let mode = ConnectionMode::from_code(mode_code)
+            .ok_or(CoreError::UnknownModeCode(mode_code))?;
+        Ok(Self {
+            session: Session::new(role, mode),
+        })
     }
 
     /// The role code this session was started with.
     pub fn role_code(&self) -> u8 {
-        todo!("GREEN commit: seam implementation")
+        self.session.role().code()
     }
 
     /// The connection-mode code this session was started with.
     pub fn connection_mode_code(&self) -> u8 {
-        todo!("GREEN commit: seam implementation")
+        self.session.mode().code()
     }
 
     /// The current session state, as a wire code.
     pub fn state_code(&self) -> u8 {
-        todo!("GREEN commit: seam implementation")
+        self.session.state().code()
     }
 
     /// Applies a command given as a wire code; returns the new state code.
     pub fn send_command(&mut self, command_code: u8) -> Result<u8, CoreError> {
-        todo!("GREEN commit: seam implementation")
+        let command = SessionCommand::from_code(command_code)
+            .ok_or(CoreError::UnknownCommandCode(command_code))?;
+        let state = self.session.apply(command)?;
+        Ok(state.code())
     }
 }
 
 /// The core version string, for shell-side sanity checks against the
 /// compiled library ("does this bridge talk to the core I was built for?").
 pub fn core_version() -> &'static str {
-    todo!("GREEN commit: seam implementation")
+    crate::version()
 }
 
 /// Convenience aliases used by shells once the bridge exists: the canonical
 /// wire codes, re-exported so the seam documents the whole vocabulary.
 pub mod codes {
+    use crate::session::{ConnectionMode, Role};
+
     /// Wire code: sender role.
     pub const ROLE_SENDER: u8 = Role::Sender as u8;
     /// Wire code: viewer role.
