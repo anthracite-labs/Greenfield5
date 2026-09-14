@@ -149,7 +149,10 @@ mod tests {
     fn send_command_rejects_unknown_command_codes() {
         let mut session = CoreSession::start(codes::ROLE_SENDER, codes::MODE_DIRECT)
             .expect("sender/direct is a valid pair");
-        assert_eq!(session.send_command(200), Err(CoreError::UnknownCommandCode(200)));
+        assert_eq!(
+            session.send_command(200),
+            Err(CoreError::UnknownCommandCode(200))
+        );
         assert_eq!(session.state_code(), SessionState::Idle.code());
     }
 
@@ -183,8 +186,10 @@ mod tests {
     #[test]
     fn errors_render_human_readable_messages() {
         assert!(!CoreError::UnknownRoleCode(7).to_string().is_empty());
-        assert!(!CoreError::Session(SessionError::SessionEnded)
-            .to_string()
-            .is_empty());
+        assert!(
+            !CoreError::Session(SessionError::SessionEnded)
+                .to_string()
+                .is_empty()
+        );
     }
 }
