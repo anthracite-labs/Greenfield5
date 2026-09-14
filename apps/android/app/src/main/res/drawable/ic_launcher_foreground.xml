@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder launcher icon: a greenfield sprout. Real branding is design
+     work tracked separately (ADR-0006 follow-ups). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Stem -->
+    <path
+        android:pathData="M54,84 L54,46"
+        android:strokeWidth="5"
+        android:strokeColor="#0F5C31"
+        android:strokeLineCap="round" />
+
+    <!-- Left leaf -->
+    <path
+        android:pathData="M54,58 C44,58 36,50 36,40 C46,40 54,48 54,58 Z"
+        android:fillColor="#1B8A4B" />
+
+    <!-- Right leaf -->
+    <path
+        android:pathData="M54,46 C64,46 72,38 72,28 C62,28 54,36 54,46 Z"
+        android:fillColor="#8BD9A5" />
+</vector>
