@@ -40,6 +40,7 @@
 pub mod seam;
 pub mod session;
 #[allow(unsafe_code)]
+#[allow(clippy::all)]
 pub mod uniffi_api;
 
 /// The crate version, as compiled in (`CARGO_PKG_VERSION`).

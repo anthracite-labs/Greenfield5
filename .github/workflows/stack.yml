@@ -74,10 +74,22 @@ jobs:
         run: |
           set -euo pipefail
           if ! cargo clippy --all-targets -- -D warnings >/tmp/clippy.txt 2>&1; then
-            python3 - /tmp/clippy.txt 'cargo clippy findings' <<'PY'
+            echo "---- clippy.txt size $(wc -c </tmp/clippy.txt) ----"
+            echo "---- tail 200 ----"
+            tail -n 200 /tmp/clippy.txt || true
+            echo "---- end tail ----"
+            python3 - /tmp/clippy.txt 'cargo clippy findings tail' <<'PY'
           import sys
           path, title = sys.argv[1], sys.argv[2]
           data = open(path, 'rb').read().decode('utf-8', 'replace')[-60000:]
+          enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          title_enc = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::error title={title_enc}::{enc}')
+          PY
+            python3 - /tmp/clippy.txt 'cargo clippy findings head' <<'PY'
+          import sys
+          path, title = sys.argv[1], sys.argv[2]
+          data = open(path, 'rb').read().decode('utf-8', 'replace')[:60000]
           enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           title_enc = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
           print(f'::error title={title_enc}::{enc}')
