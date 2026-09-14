@@ -52,7 +52,7 @@ impl From<SessionError> for CoreError {
 
 /// One live session behind the seam. Opaque to the shells: they hold it by a
 /// handle in the future bridge and interact through codes only.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CoreSession {
     session: Session,
 }

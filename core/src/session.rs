@@ -208,7 +208,7 @@ impl std::error::Error for SessionError {}
 
 /// One temporary Greenfield5 session: a role, a connection mode, and the
 /// state machine that both shells drive through [`Session::apply`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Session {
     role: Role,
     mode: ConnectionMode,
