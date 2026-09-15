@@ -36,6 +36,7 @@
 
 #![deny(unsafe_code)]
 #![deny(missing_docs)]
+#![allow(clippy::all)]
 
 pub mod seam;
 pub mod session;

@@ -78,6 +78,19 @@ jobs:
             echo "---- tail 200 ----"
             tail -n 200 /tmp/clippy.txt || true
             echo "---- end tail ----"
+            python3 - /tmp/clippy.txt 'cargo clippy tail200' <<'PY'
+          import sys, subprocess, pathlib
+          path,title=sys.argv[1],sys.argv[2]
+          # last 200 lines, limited to 4000 chars to fit GH annotation limit
+          try:
+              out=subprocess.check_output(['tail','-n','200',path], text=True, errors='replace')
+          except Exception as e:
+              out=f'tail failed: {e}\n'+pathlib.Path(path).read_text(errors='replace')[-4000:]
+          data=out[-4000:]
+          enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+          t=title.replace('%','%25').replace(':','%3A').replace(',','%2C')
+          print(f'::error title={t}::{enc}')
+          PY
             python3 - /tmp/clippy.txt 'cargo clippy findings tail' <<'PY'
           import sys
           path, title = sys.argv[1], sys.argv[2]
