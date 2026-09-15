@@ -47,8 +47,7 @@ if [ ! -f "$GENERATED_KT" ]; then
   printf 'ERROR: expected generated binding missing: %s\n' "$GENERATED_KT" >&2
   exit 1
 fi
-if ! grep -q '^package uniffi.greenfield5
- "$GENERATED_KT"; then
+if ! grep -q '^package uniffi.greenfield5$' "$GENERATED_KT"; then
   printf 'ERROR: generated Kotlin package does not match app bridge imports\n' >&2
   head -n 40 "$GENERATED_KT" >&2 || true
   exit 1
