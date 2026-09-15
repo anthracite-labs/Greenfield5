@@ -1,4 +1,5 @@
 # Stack CI for the application tree (ADR-0006, ADR-0007).
+# Android real-FFI proof uses core/uniffi.toml to keep generated bindings in the app-owned package.
 #
 # Runs ALONGSIDE — never instead of — the foundation gate in verify.yml.
 # The required status contexts stay exactly the two defined in
