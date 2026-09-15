@@ -17,7 +17,7 @@ struct BridgeTests {
 
     @Test("sender journey reaches active via typed API")
     func senderJourneyTyped() throws {
-        let session = GreenfieldSession.new(role: .sender, mode: .internet)
+        let session = GreenfieldSession(role: .sender, mode: .internet)
         #expect(try session.apply(command: .startPairing) == .awaitingPeer)
         #expect(try session.apply(command: .peerRequestedJoin) == .awaitingApproval)
         #expect(session.viewerApproved() == false)
@@ -27,7 +27,7 @@ struct BridgeTests {
 
     @Test("viewer journey reaches active")
     func viewerJourneyTyped() throws {
-        let session = GreenfieldSession.new(role: .viewer, mode: .local)
+        let session = GreenfieldSession(role: .viewer, mode: .local)
         #expect(try session.apply(command: .requestJoin) == .awaitingApproval)
         #expect(try session.apply(command: .approvalReceived) == .active)
     }
@@ -47,7 +47,7 @@ struct BridgeTests {
 
     @Test("one-viewer rule preserved")
     func oneViewerRule() throws {
-        let session = GreenfieldSession.new(role: .sender, mode: .direct)
+        let session = GreenfieldSession(role: .sender, mode: .direct)
         _ = try session.apply(command: .startPairing)
         _ = try session.apply(command: .peerRequestedJoin)
         #expect(throws: BridgeError.self) {
