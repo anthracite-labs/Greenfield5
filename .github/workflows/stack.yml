@@ -405,14 +405,24 @@ jobs:
           cat /tmp/ios-xcode-build.txt
           echo "=== Build log tail 1000 ==="
           tail -n 1000 /tmp/ios-xcode-build.txt || true
-          echo "=== Grep for error: ==="
-          grep -i -n "error:" /tmp/ios-xcode-build.txt | head -n 500 || true
-          echo "=== Grep for RustBuffer/ForeignBytes/canImport ==="
-          grep -n "RustBuffer\|ForeignBytes\|RustCallStatus\|canImport\|ffi_greenfield5\|checksum\|Greenfield5Core\|ProcessXCFramework\|Ld " /tmp/ios-xcode-build.txt | head -n 500 || true
+          echo "=== Grep for error: (last 500) ==="
+          grep -i -n "error:" /tmp/ios-xcode-build.txt | tail -n 500 || true
+          echo "=== Grep for RustBuffer/ForeignBytes/canImport/checksum ==="
+          grep -n "RustBuffer\|ForeignBytes\|RustCallStatus\|canImport\|ffi_greenfield5\|checksum\|Greenfield5Core\|ProcessXCFramework\|undefined symbol\|linker command failed" /tmp/ios-xcode-build.txt | tail -n 500 || true
+          echo "=== Full error context ==="
+          grep -n -A3 -B3 "error:" /tmp/ios-xcode-build.txt | tail -n 1000 || true
+          # Prepare error summary for annotation
+          grep -i -n "error:" /tmp/ios-xcode-build.txt | tail -n 100 > /tmp/ios-errors-summary.txt 2>&1 || echo "no errors found" > /tmp/ios-errors-summary.txt
+          grep -n "RustBuffer\|ForeignBytes\|RustCallStatus\|canImport\|ffi_greenfield5\|checksum\|undefined symbol" /tmp/ios-xcode-build.txt | tail -n 100 >> /tmp/ios-errors-summary.txt 2>&1 || true
+          echo "=== Error summary ==="
+          cat /tmp/ios-errors-summary.txt
           if [ $rc -ne 0 ]; then
-            echo "=== Full build log for annotation (last 60000 chars) ==="
-            tail -c 60000 /tmp/ios-xcode-build.txt | tail -n 400 || true
-            python3 - /tmp/ios-xcode-build.txt 'iOS xcodebuild' <<'PY'
+            echo "=== Annotation from error summary ==="
+            python3 - /tmp/ios-errors-summary.txt 'iOS xcodebuild errors' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            echo "=== Annotation from full build tail ==="
+            python3 - /tmp/ios-xcode-build.txt 'iOS xcodebuild full tail' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
             exit 1
