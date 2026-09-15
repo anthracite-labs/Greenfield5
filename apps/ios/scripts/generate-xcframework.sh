@@ -18,7 +18,11 @@ IOS_DIR="$(cd -- "$SCRIPT_DIR/.." || exit 1; pwd)"
 REPO_ROOT="$(cd -- "$IOS_DIR/../.." || exit 1; pwd)"
 CORE_DIR="$REPO_ROOT/core"
 GEN_DIR="$IOS_DIR/Greenfield5/Bridge/Generated"
-HEADER_DIR="$GEN_DIR/headers"
+# Dedicated clean header staging outside the Xcode synchronized group to avoid
+# Xcode picking up headers as sources and to prevent recursive embedding.
+# Previous location GEN_DIR/headers was inside Greenfield5/ (synchronized),
+# causing Xcode to include headers as sources and potential recursion.
+HEADER_DIR="$CORE_DIR/target/xcframework-headers"
 
 printf 'SCRIPT_DIR=%s\n' "$SCRIPT_DIR"
 printf 'IOS_DIR=%s\n' "$IOS_DIR"
