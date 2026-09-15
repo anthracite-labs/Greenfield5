@@ -550,3 +550,91 @@ the workflow's rm/generate/validate sequence and lacks the workflow's
 `uniffi/greenfield5_core` wrong-package guard; the 2 SC2038 `find | xargs`
 notes; and the fallback's error variants are `data class`/`object` where
 UniFFI generates plain `class` with an overridden `message`.
+
+## 2026-09-15 — PR #17 repair 3: review findings A/B/C (CI env, unsafe docs, CI evidence)
+
+**Context:** Same lineage, branch `arena/01a0a5e2-greenfield5`. An independent
+review of PR #17 head `2dcb71a` raised three findings: **(A HIGH)**
+`build.gradle.kts` manufactured `CI`/`GITHUB_ACTIONS`; **(B MEDIUM)** ADR-0007
+described a stronger unsafe boundary than the compiler enforces; **(C MEDIUM)**
+the PR body's CI evidence was stale and a green job published nothing
+observable. The previous entry had already logged (A) as a deliberately
+deferred follow-up. A separate research-harvest task was issued first and
+stopped at its own entry gate: PR #17 is still `OPEN` with
+`reviewDecision=CHANGES_REQUESTED`, and `main` (`d3b933f`) contains **zero**
+bridge files (`git ls-tree -r main | grep -iE "uniffi|bridge|xcframework|jniLibs"`
+→ empty), so that task reported BLOCKED instead of starting a competing bridge.
+
+**Did:** Repair commit `1574fc63359609f7106644c89c26f4a978aafab4` (1 commit,
+5 files, +238/−11), a clean fast-forward descendant of `2dcb71a` (ahead 1,
+behind 0, merge base with main unchanged). (A) deleted both
+`environment("CI"/"GITHUB_ACTIONS", … ?: "")` lines — nothing needed
+forwarding — and, because strictness now rests on inheritance, added a
+fail-closed assertion in the Android job: the proof step exits 1 unless the log
+contains `RealRustBridgeProof: isCI=true`. (B) changed **no attribute**; it
+corrected ADR-0007 and the `lib.rs` comments to state the enforced shape, and
+added ADR follow-up 7. (C) added three bounded `::notice` publishers
+(Android proof + JUnit tally; iOS generated-artifact byte sizes; iOS
+destination/executed-count/`TEST SUCCEEDED`).
+
+**Verified:** Gradle fork-env semantics from primary source at the *pinned*
+version (tag `v9.6.1`, matching `gradle-wrapper.properties`):
+`Test.environment(name,value)` → fork options
+(`platforms/jvm/testing-jvm/.../Test.java:611-612`);
+`DefaultProcessForkOptions.environment(name,value)` → `getEnvironment().put(…)`,
+and `getEnvironment()` lazily seeds from `getInheritableEnvironment()` =
+`System.getenv()` (`process-services/.../DefaultProcessForkOptions.java:82-91,111-113`);
+`ProcessBuilderFactory.java:36-38` clears the child env and installs that
+already-seeded map ⇒ **merge, not replace**. UniFFI narrowing evidence at tag
+`v0.32.1`: `setup_scaffolding.rs` emits `pub unsafe extern "C" fn` shims *and*
+`pub struct UniFfiTag`, which derive output references as `crate::UniFfiTag`
+(`uniffi_macros/src/enum_.rs:255`, `record.rs:121`, ~15 sites in `ffiops.rs`,
+`util.rs:230,247`), and `#[macro_export] uniffi_reexport_scaffolding!` resolves
+`$crate::uniffi_reexport_hack` ⇒ crate-root placement is contractual.
+`bash scripts/verify.sh` → PASS 16/0/2 exit 0; `bash scripts/selftest.sh` →
+PASS 128/128 exit 0; both workflows parse as YAML; all 32 `run:` block scalars
+pass `bash -n`; all 27 embedded `<<'PY'` heredocs compile. **Executed** every
+new block against fixtures rather than only compiling it: the Android notice
+emitted the exact `RealRustBridgeProof: isCI=true, libLoaded=true,
+version=0.1.0, loadError=null` line plus `tests=2 failures=0 errors=0
+skipped=0`; the fail-closed gate passed through on `isCI=true` (exit 0) and
+exited 1 on `isCI=false`, on a missing proof line, and on a missing log; the
+iOS artifact notice distinguished a 3000000B slice from an 8B placeholder and
+flagged `PLACEHOLDER-SIZED`; the iOS test notice reported the executed count
+and warned `NOT EVIDENCE` when xcodebuild "succeeded" with zero tests.
+
+**Learned:** Presence-based environment detection (`getenv(x) != null`) plus a
+build script that fills the variable with `""` inverts a fail-closed test into
+a fail-*open* one on developer machines — and the fix direction depends
+entirely on whether the runner's env is merged or replaced, which is a
+question only the toolchain's own source can answer. Documenting a boundary
+the compiler does not enforce is itself a review finding: the honest phrasing
+is "deny-by-declaration, not deny-by-default". A `::notice` publisher must
+encode `%` *before* CR/LF or build output can inject a workflow command, and
+must announce absent evidence rather than emit an empty payload that reads as
+a pass. Tooling note: `python3 - … <<'PY' … PY || true` does not match a
+`<<'PY'\n` extraction regex — the checker silently reported 23 heredocs while
+26 existed, so a "all compile" result was initially vacuous.
+
+**Dead ends:** Artifact downloads *and* raw job logs are both blocked
+(`productionresultssa*.blob.core.windows.net` → EOF), so check-run annotations
+remain the only CI channel readable from the sandbox; the run cited by the old
+`lib.rs` comment (`34961828367`) is `cancelled` and its annotations hold only
+cargo-download noise, so that citation was replaced with commit `d318aa9`,
+whose message is durable repo state. A sandbox rebuild had again rewound local
+git while keeping a dirty tree; recovered by diffing the dirty tree against the
+*reviewed* head before discarding it. `#![allow(unused_attributes)]` was
+deliberately **not** removed — plausibly vestigial now that no attribute sits
+on the invocation, but unprovable without `cargo`, and not worth a CI cycle.
+
+**Next:** No CI exists for `1574fc6`: a session-branch push triggers nothing
+(`push` is limited to `main`), `workflow_dispatch` returns 403 for this token,
+and PR events fire only on the PR head. The PR branch
+`arena/01a0a1e4-greenfield5` must be fast-forwarded `2dcb71a → 1574fc6`
+externally; then observe the exact-head `verify` and `Stack` runs and update the
+PR body acceptance table with the **new** run IDs and the Android real-Rust
+proof annotation (`35001928448`/`35001928496` belong to `2dcb71a` and must not
+be reused). Issue #15 criteria 8, 9, 11 and 12 are MET locally; criterion 10
+(exact-head stack CI green with run IDs in the PR body) is NOT MET and is
+blocked on that fast-forward — recorded as pending, never as passed. Only after
+PR #17 merges does the blocked research-harvest task's entry condition clear.
