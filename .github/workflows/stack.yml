@@ -801,7 +801,7 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@4dc3d59d95d67dcd800aeee9341a00d3f7d6548
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
         if: matrix.target == 'android'
       - name: Android NDK
         if: matrix.target == 'android'

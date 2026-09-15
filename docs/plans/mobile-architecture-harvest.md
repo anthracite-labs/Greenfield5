@@ -124,3 +124,10 @@ ADOPT requires all proofs. A reproducible upstream blocker may justify precise
 DEFER with unexecuted downstream criteria explicitly reported. KEEP/DEFER removes
 disposable candidate/build/dependency code while retaining evidence at experiment
 SHAs and final exact-head production CI. Continue PR #18, never create another PR.
+
+Failure capture: run 35028595606, both generation matrix jobs failed at Set up
+job: setup-android SHA 4dc3… could not be resolved. Root cause: candidate used
+a stale research citation rather than the current control workflow pin. The
+control and fresh upstream commits/v3 API agree on 9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407.
+Smallest fix: use that already-reviewed current pin. Not a BoltFFI defect or
+external execution blocker. Re-run on the next head; no checks relaxed.
