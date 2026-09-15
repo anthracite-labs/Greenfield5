@@ -78,7 +78,7 @@ class RealRustBridgeProofTest {
     }
 
     @Test
-    fun `core version from Rust must match Cargo.toml version`() {
+    fun `core version from Rust must match Cargo toml version`() {
         val isCI = System.getenv("CI") != null || System.getenv("GITHUB_ACTIONS") != null
         if (!GreenfieldRustBridge.isLibraryLoaded() && !isCI) {
             println("Skipping version match test - no Rust lib locally")
