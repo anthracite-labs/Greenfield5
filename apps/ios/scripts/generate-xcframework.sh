@@ -111,16 +111,32 @@ fi
 printf 'Original module name: %s\n' "$ORIG_MODULE_NAME"
 
 # Write normalized module.modulemap
-# We intentionally drop all `use` declarations that reference builtin modules to support Xcode 26/27.
-# If needed, we could keep `use "Darwin"` but safest is header + export * only, which is known to work
-# per community guides (Mobile System Design article, boehs.org guide) and avoids builtin issue.
+# We intentionally drop `use "_Builtin_stdbool"` / `use "_Builtin_stdint"` which break canImport
+# under Xcode 26/27 (UniFFI issue #2917, LLVM D159483). Keep `use "Darwin"` if present in original,
+# as Darwin is standard and not problematic, and helps with stdbool/stdint availability.
+# Narrowest fix: header + export * + optional Darwin use.
 # Reference: https://github.com/mozilla/uniffi-rs/issues/2917
-cat > "$HEADER_DIR/module.modulemap" <<EOF
+HAS_DARWIN="0"
+if grep -q 'use "Darwin"' "$MODULEMAP_SRC" 2>/dev/null; then
+  HAS_DARWIN="1"
+fi
+
+if [ "$HAS_DARWIN" = "1" ]; then
+  cat > "$HEADER_DIR/module.modulemap" <<EOF
+module $ORIG_MODULE_NAME {
+    header "$HEADER_BASENAME"
+    export *
+    use "Darwin"
+}
+EOF
+else
+  cat > "$HEADER_DIR/module.modulemap" <<EOF
 module $ORIG_MODULE_NAME {
     header "$HEADER_BASENAME"
     export *
 }
 EOF
+fi
 
 printf 'Normalized module.modulemap written to %s/module.modulemap:\n' "$HEADER_DIR"
 cat "$HEADER_DIR/module.modulemap"

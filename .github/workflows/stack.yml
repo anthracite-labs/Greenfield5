@@ -347,6 +347,20 @@ jobs:
           xcrun simctl list devices available 2>&1 | head -n 200 || true
           echo "Xcode version:"
           xcodebuild -version
+          echo "Project file references:"
+          grep -n "Greenfield5Core.xcframework" Greenfield5.xcodeproj/project.pbxproj || true
+          echo "Generated files listing:"
+          find Greenfield5/Bridge/Generated -type f -ls 2>&1 || true
+          echo "XCFramework Info.plist:"
+          cat Greenfield5/Bridge/Generated/Greenfield5Core.xcframework/Info.plist 2>&1 || true
+          echo "XCFramework headers listing:"
+          find Greenfield5/Bridge/Generated/Greenfield5Core.xcframework -type f -name "*.h" -o -name "*.modulemap" | xargs ls -lh 2>&1 || true
+          for f in Greenfield5/Bridge/Generated/Greenfield5Core.xcframework/*/Headers/module.modulemap; do
+            echo "=== $f ==="
+            cat "$f" 2>&1 || true
+          done
+          echo "Swift bindings head (first 300 lines):"
+          head -n 300 Greenfield5/Bridge/Generated/greenfield5_core.swift 2>&1 || true
           # Xcode 26 on macos-15 has iPad (10th gen) with OS 18.5/18.6/26.0.1/26.1/26.2 (run 34973769653)
           # iPhone 16 not available in that image; use iPad as primary, then generic, then Any device
           set +e
@@ -389,14 +403,33 @@ jobs:
           fi
           set -e
           cat /tmp/ios-xcode-build.txt
+          echo "=== Build log tail 1000 ==="
+          tail -n 1000 /tmp/ios-xcode-build.txt || true
+          echo "=== Grep for error: ==="
+          grep -i -n "error:" /tmp/ios-xcode-build.txt | head -n 500 || true
+          echo "=== Grep for RustBuffer/ForeignBytes/canImport ==="
+          grep -n "RustBuffer\|ForeignBytes\|RustCallStatus\|canImport\|ffi_greenfield5\|checksum\|Greenfield5Core\|ProcessXCFramework\|Ld " /tmp/ios-xcode-build.txt | head -n 500 || true
           if [ $rc -ne 0 ]; then
-            tail -n 400 /tmp/ios-xcode-build.txt || true
+            echo "=== Full build log for annotation (last 60000 chars) ==="
+            tail -c 60000 /tmp/ios-xcode-build.txt | tail -n 400 || true
             python3 - /tmp/ios-xcode-build.txt 'iOS xcodebuild' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
             exit 1
           fi
           tail -n 100 /tmp/ios-xcode-build.txt || true
+
+      - name: Upload iOS build log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-build-log
+          path: /tmp/ios-xcode-build.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run iOS tests
+        run: |
 
       - name: Run iOS tests
         run: |
