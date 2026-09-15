@@ -92,3 +92,35 @@ redesign, unrelated upgrades or CI governance changes. No copied upstream code
 or new product dependency in Phase A. Maintain native Kotlin/Compose,
 Swift/SwiftUI, Rust, Android 10+/iOS 16+, narrow seam, progressive permissions,
 no content retention, one sender/viewer, and ADR-0005 mode semantics.
+
+## Continuation — executable Phase B (PR #18, 2026-09-15)
+
+Re-fetched PR #18 OPEN at 5ca0dff699a88048bb1d062a4f56c8eef9d7636e,
+base 6c85f9a098aba114c94c6247257ea013fa53abd1. Production tree unchanged.
+Reuse Phase A; no donor survey repeated. BoltFFI stable v0.30.1 resolves to
+2e6320a6d92cb591d22b908477f3a47da7ebc9bc, same version as Crux. CLI and
+runtime exact =0.30.1. All six identified acceptance issues still open.
+
+Execution design: isolated `spikes/boltffi` crate compiling the existing
+`core/src/session.rs` and `seam.rs` by path, not copying their behavior and not
+linking UniFFI into the candidate. Independent generated output directories.
+Production core/app jobs remain unchanged; candidate jobs added to Stack with
+finite timeouts, failure annotations and artifact capture. CI generates the
+lockfile with real Cargo; retrieve and commit it before final candidate proof.
+
+Test sequence: first RED exact-version Rust test against deliberately empty
+export; then delegate version/session operations and encode contract journeys,
+typed errors, invalid codes, mixed-layout round-trip, async cancel and bounded
+sequence stream probes. Runner: `cargo test --manifest-path spikes/boltffi/Cargo.toml`.
+Host proofs must load generated native bindings, never behavioral substitutes.
+Android candidate uses same Gradle toolchain/minSdk 29 in an isolated app module;
+Apple candidate generated package is tested with Swift/Xcode and simulator app
+integration if generation succeeds. Run controlled close stress separately with
+a timeout; even success cannot overrule documented unsafe concurrent close.
+
+Before each push review diff and run foundation gates. After concrete generator/
+platform failures use smallest source-backed fix; do not weaken tests. Final
+ADOPT requires all proofs. A reproducible upstream blocker may justify precise
+DEFER with unexecuted downstream criteria explicitly reported. KEEP/DEFER removes
+disposable candidate/build/dependency code while retaining evidence at experiment
+SHAs and final exact-head production CI. Continue PR #18, never create another PR.

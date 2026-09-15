@@ -13,12 +13,14 @@ on:
   push:
     branches: [main]
     paths:
+      - spikes/boltffi/**
       - core/**
       - apps/android/**
       - apps/ios/**
       - .github/workflows/stack.yml
   pull_request:
     paths:
+      - spikes/boltffi/**
       - core/**
       - apps/android/**
       - apps/ios/**
@@ -738,3 +740,41 @@ jobs:
           path: /tmp/ios-xcode-test.txt
           if-no-files-found: warn
           retention-days: 7
+
+  boltffi-rust:
+    name: BoltFFI Rust experiment
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: spikes/boltffi
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - name: Rust contract RED or GREEN
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          set +e
+          cargo test > evidence.log 2>&1
+          result=$?
+          set -e
+          cat evidence.log
+          python3 - <<'PYTHON'
+          import pathlib
+          text = pathlib.Path("evidence.log").read_text()[-3500:]
+          text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print("::notice title=BoltFFI Rust contract::" + text)
+          PYTHON
+          exit "$result"
+      - name: Publish generated lockfile for review
+        if: always()
+        run: |
+          if test -f Cargo.lock; then
+            python3 - <<'PYTHON'
+          import pathlib
+          data = pathlib.Path("Cargo.lock").read_text()
+          for i in range(0, len(data), 3000):
+              chunk = data[i:i+3000].replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::notice title=BoltFFI lock chunk {i//3000}::{chunk}")
+          PYTHON
+          fi

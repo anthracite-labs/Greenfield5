@@ -1,0 +1,12 @@
+[package]
+name = "greenfield5-bolt-spike"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "greenfield5_bolt_spike"
+crate-type = ["rlib", "cdylib", "staticlib"]
+
+[dependencies]
+boltffi = "=0.30.1"
