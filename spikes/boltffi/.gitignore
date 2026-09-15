@@ -1,3 +1,5 @@
 /target/
 /generated/
 /evidence.log
+/android/.gradle/
+/android/build/

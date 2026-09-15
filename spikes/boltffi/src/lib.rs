@@ -371,6 +371,7 @@ use std::task::{Context, Poll, Waker};
 use std::pin::Pin;
 use std::future::Future;
 
+/// Test fixture: exactly one outstanding wait per instance; not a production executor.
 pub struct AsyncProbe {
     released: AtomicBool,
     active: AtomicU32,
@@ -378,7 +379,10 @@ pub struct AsyncProbe {
 }
 struct WaitGuard<'a>(&'a AsyncProbe);
 impl Drop for WaitGuard<'_> {
-    fn drop(&mut self) { self.0.active.fetch_sub(1, Ordering::SeqCst); }
+    fn drop(&mut self) {
+        self.0.waker.lock().expect("probe waker lock").take();
+        self.0.active.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 struct Gate<'a>(&'a AsyncProbe);
 impl Future for Gate<'_> {
@@ -397,7 +401,8 @@ impl AsyncProbe {
     pub fn active(&self) -> u32 { self.active.load(Ordering::SeqCst) }
     pub fn release(&self) {
         self.released.store(true, Ordering::SeqCst);
-        if let Some(waker) = self.waker.lock().expect("probe waker lock").take() { waker.wake(); }
+        let waker = self.waker.lock().expect("probe waker lock").take();
+        if let Some(waker) = waker { waker.wake(); }
     }
     pub async fn wait_value(&self, sequence: u32, fail: bool) -> Result<u32, BridgeError> {
         self.active.fetch_add(1, Ordering::SeqCst);
@@ -441,3 +446,11 @@ impl EventProbe {
     pub fn stop(&self) { self.subscription.unsubscribe(); }
     pub fn is_active(&self) -> bool { self.subscription.is_active() }
 }
+
+#[boltffi::data]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PaddingProbe { pub version: u16, pub value: u32 }
+#[boltffi::export]
+pub fn padding_round_trip(value: PaddingProbe) -> PaddingProbe { value }
+#[boltffi::export]
+pub fn padding_list(value: PaddingProbe) -> Vec<PaddingProbe> { vec![value, value] }

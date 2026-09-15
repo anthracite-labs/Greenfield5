@@ -1,0 +1,33 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+plugins {
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+}
+android {
+    namespace = "dev.greenfield5.boltproof"
+    compileSdk = 37
+    defaultConfig {
+        applicationId = "dev.greenfield5.boltproof"
+        minSdk = 29
+        targetSdk = 37
+        versionCode = 1
+        versionName = "0.1.0"
+        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
+    }
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = true
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+        }
+    }
+    sourceSets.getByName("main") {
+        java.srcDirs("../generated/kotlin", "../host")
+        jniLibs.srcDirs("../generated/jniLibs")
+    }
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+    kotlin { compilerOptions { jvmTarget = JvmTarget.fromTarget("17") } }
+}
+dependencies { implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2") }

@@ -35,3 +35,19 @@ import Testing
         stream.unsubscribe()
     }
 }
+
+@Suite("Bolt ownership") struct BoltOwnership {
+    @Test func crossTaskCancellation() async throws {
+        let probe = AsyncProbe()
+        let task = Task { try await probe.waitValue(sequence: 1, fail: false) }
+        while probe.active() == 0 { await Task.yield() }
+        task.cancel()
+        _ = await task.result
+        #expect(probe.active() == 0)
+    }
+    @Test func padding() {
+        let value = PaddingProbe(version: 0x1234, value: 0x55667788)
+        #expect(paddingRoundTrip(value: value) == value)
+        #expect(paddingList(value: value) == [value, value])
+    }
+}
