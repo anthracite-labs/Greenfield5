@@ -1,17 +1,21 @@
 # Open-source mobile architecture harvest
 
-Inspection date: **2026-09-15 (UTC)**. Status: **BLOCKED / partial research
-checkpoint**, not a completed A/B or migration decision. UniFFI remains the
-control under ADR-0007. No production files or dependencies changed.
+Inspection date: **2026-09-15 (UTC)**. Current decision: **DEFER BOLTFFI** until
+a released version generates Swift-6-compatible async cancellation callbacks
+and resolves the documented concurrent-close ownership contract (#664), then
+rerun the native async/event/ownership acceptance tests. See **Executed A/B and
+decision** below for CI evidence and remaining unexecuted tests. UniFFI remains
+the production bridge under ADR-0007; disposable candidate code was removed.
 
 ## Scope
 
 Should the newly merged UniFFI bridge be replaced before async transport/media
 increases the FFI surface? Which donor packaging, observability and capture
 lifecycle patterns reduce upcoming implementation risk? This report records a
-first source pass across all eight required donors. Phase B has **not been
-implemented or executed**; Phase C cannot be signed off. Missing runtime proof
-is neither parity nor disproven parity. See the [plan](../plans/mobile-architecture-harvest.md).
+first source pass across all eight required donors, followed by an executable
+CI comparison. The initial checkpoint did not execute Phase B; the continuation
+below supersedes that status. Missing runtime proof is neither parity nor
+disproven parity. See the [plan](../plans/mobile-architecture-harvest.md).
 
 Excluded: production capture, media transport implementation, pairing UX,
 accounts, backend, browser viewer, relay deployment, rooms, remote control,
@@ -194,7 +198,7 @@ with Greenfield5's AGP/Kotlin/Swift/Xcode pins and Android 29/iOS 16 was not tes
 Getting-started, error/classes implementation, JNI internals, all mobile test
 fixtures and repeat-build reproducibility remain incomplete inspection areas.
 
-## UniFFI baseline findings and A/B comparison
+## UniFFI baseline findings and checkpoint A/B comparison (historical)
 
 Control source: `core/src/uniffi_api.rs` delegates to the existing Rust Session
 with Arc/Mutex, typed enums/errors and u8 facade methods. Android generation
@@ -240,7 +244,7 @@ saying it is absent is historical, not current truth.
 | Relevant open upstream issues | Script references UniFFI #2917; not freshly revalidated here | BoltFFI #664/#778/#771/#780/#871/#872 |
 | Migration cost | Zero to preserve | UNKNOWN; API wrappers/tests/loading/build diff required |
 
-**Android, iOS, async and stream acceptance: NOT MET.** No candidate was built,
+**At the initial checkpoint: Android, iOS, async and stream acceptance NOT MET.** No candidate had been built,
 no parity failure was reproduced, no sender/viewer candidate journey was run,
 and no native version result was obtained. Tool discovery returned no cargo,
 rustc, java, gradle, adb, xcodebuild or swift; Linux cannot supply Xcode.
@@ -392,9 +396,9 @@ No CRITICAL/HIGH security defect introduced by these docs was identified.
 This is **not** a completed generated-code/JNI/dependency security audit of an
 executable candidate. Foundation scanner/gate evidence belongs to the PR.
 
-## Unknowns and spec review
+## Initial checkpoint unknowns and spec review (historical)
 
-Overall task conformance: **FAIL / incomplete**, not a completed harvest + A/B.
+At the initial checkpoint, overall task conformance: **FAIL / incomplete**, not a completed harvest + A/B.
 Baseline verification and durable plan are present; all eight pins and initial
 pattern verdicts are recorded. Full donor inspection is PARTIAL. Android/iOS
 parity, generated outputs, async/stream execution, packaging delta, artifact size,
@@ -404,9 +408,9 @@ TDD not run: no executable behavior added. No failed runtime experiments exist
 to report; tool discovery failed to find native toolchains. `gh issue view`
 failed on deprecated Projects classic GraphQL fields; REST issue APIs succeeded.
 
-## Recommended next step
+## Initial checkpoint next step (superseded by continuation below)
 
-**Exactly one next PR: complete the isolated BoltFFI A/B evidence spike**, retaining
+**Checkpoint recommendation: complete the isolated BoltFFI A/B evidence spike**, retaining
 UniFFI. Pin CLI/runtime together (Crux comparison baseline 0.30.1, with the release
 source resolved before use), delegate to the existing core, run native Kotlin and
 Swift contract tests in CI, and include slow-consumer and concurrent-close tests.
@@ -420,3 +424,297 @@ encoded moving stream through Rust/Iroh/MoQ between Android and iOS, usable
 receiver rendering, selected path/RTT and direct/forced connectivity-relay
 observations for 60 seconds. This describes the later acceptance target, not a
 second PR recommendation or authorization to implement capture now.
+
+## Executed A/B and decision — PR #18 continuation
+
+### Decision and precise trigger
+
+**DEFER BOLTFFI** until a **released**, exactly pinned CLI/runtime pair:
+
+1. generates Swift async cancellation code that compiles unchanged under this
+   project's Swift 6 settings (no suppression, no generated-source patch);
+2. resolves upstream **#664**'s documented concurrent-close ownership contract;
+3. then passes the rerun native async/cancellation, slow-consumer/bounded-stream,
+   close/cleanup and existing session-contract acceptance tests on both platforms.
+
+The concrete blocker is **not lack of local tooling**. GitHub Linux/macOS runners
+installed and executed BoltFFI, built real target libraries and generated stable
+sources. Xcode then rejected the generated async runtime twice. Adoption would
+require editing generated safety-sensitive code or weakening the Swift language
+settings; neither is acceptable for this narrow comparison. This is a bounded
+deferral, not a claim that UniFFI is universally better or BoltFFI can never fit.
+No ADR supersedes ADR-0007 because no production mechanism changes.
+
+The user permits unmet downstream criteria when execution establishes a concrete
+DEFER reason. That exception applies here. **Full mobile parity is not claimed**:
+Swift tests could not compile, Android runtime testing stopped at emulator boot,
+and host cancellation/slow-stream/close safety remain unverified. This decision
+must not be presented as every item in the original definition of done passing.
+
+### Version, isolation and provenance
+
+VERIFIED: fresh releases/latest API returned **v0.30.1**, published 2026-08-17;
+tag resolves to **2e6320a6d92cb591d22b908477f3a47da7ebc9bc**. Same release as the
+Crux checkpoint, avoiding a floating-main comparison. Manifest used
+`boltffi = "=0.30.1"`; CLI installed with
+`cargo install boltffi_cli --version '=0.30.1' --locked` and reported 0.30.1.
+BoltFFI is MIT; no generated source or upstream fragments remain in the final
+product tree. The previous iroh-live license anomaly remains unresolved.
+
+Candidate was `spikes/boltffi`, a separate Rust crate compiling the existing
+`core/src/session.rs` and `seam.rs` by path. No semantic copy, no UniFFI linked
+into the candidate. The wrapper adapted this repository's own typed bridge;
+spike-only fixtures added an async gate, eight-slot sequence subscription and
+wire/mixed-width padding records. Candidate outputs were isolated from production.
+An independent Android application used the existing pinned version catalog and
+Gradle wrapper, minSdk 29 and compile/targetSdk 37. Apple CI copied the existing
+Xcode project to a temporary output directory, replaced only its generated
+bridge/native artifact in that copy, and kept Swift 6/iOS 16 settings intact.
+Production UniFFI jobs continued alongside the candidate.
+
+Real CI Cargo generated the candidate lockfile; its ordered annotation chunks
+were retrieved, parsed as TOML and committed at fd97096. Subsequent candidate
+Rust tests ran `--locked`. Candidate lock contained **82 package records**,
+control lock **81**, including their respective roots; this is a lock graph
+count, **not** runtime binary dependencies or a security score. Candidate also
+used exact thiserror 2.0.20 (matching the control lock), coroutines 1.10.2,
+AndroidX test runner 1.6.2 and test JUnit extension 1.2.1. CLI has its own
+published locked build graph, not included in the 82 count.
+
+### Executed attempts (not interchangeable heads)
+
+| Head | Stack run | Observed candidate result |
+|---|---|---|
+| `7032f36c5084fb560426716f1f764c12b6502f65` | 35028391885 | Expected RED: exported Rust version returned empty string, assertion expected 0.1.0; dependency installed/compiled |
+| `e4223defe2ac49e37ed1341a1dfbc4da588171f3` | 35028595606 | Rust 33 existing + 4 candidate tests PASS; generation matrix failed action resolution before execution |
+| `069b322f4c032400b45ac2215e9eac9f8d070bcb` | 35028712207 | Corrected action SHA; Android setup action failed; Apple CLI attempt later superseded |
+| `fd97096cad04b0868af1f31abf7d2fca501ca115` | 35028960389 | Apple CLI installed, pack failed on default target set; Android opaque setup failed again |
+| `d2e7eec02014c8cf6964e8aa1c6bf10d18d2cf1e` | 35029393019 | Explicit SDK setup reported platform 37 unavailable; Apple native builds succeeded before run superseded during generation |
+| `2958066a69b06f4170ed09f22a2d52807ad011a3` | 35029785166 | Both platforms packaged native artifacts and repeated source generation; Rust 33+6 PASS; host integration paths needed correction |
+| `9732a04f31cc71e6db1ab899bd55a4cd8d16cbb6` | 35030494991 | Swift 6 generated cancellation capture errors; Android fixture lacked Compose runtime |
+| `a2904045e56c784ac6b972c7cef8b7bc041e9d05` | 35031170818 | Same Swift errors reproduced; Android assemblies completed, emulator boot wait exited 124; native host tests NOT EXECUTED |
+
+These runs are **experimental evidence**, not final-head CI. Superseded control
+jobs were canceled by workflow concurrency; their incomplete results are not
+control failures. Manual cancel API returned 403; automatic supersession worked.
+Raw job logs redirected to inaccessible blob storage, so bounded success/failure
+annotations and job-step statuses were used. No downloaded log was fabricated.
+
+Fixes were confined and source-backed: correct stale action SHA to the control's
+current pin; expose SDK command errors rather than opaque action failure;
+install/configure supported arm64 Apple targets; use AGP Kotlin source sets;
+consume actual ffi-only package layout; supply Compose runtime through the same
+BOM as the shell. No test assertion was relaxed, SDK floor reduced, Swift warning
+suppressed, or generator source patched. The earlier sdkmanager platform 37
+error was **not a lasting blocker**: control-equivalent NDK provision followed
+by unchanged Gradle compileSdk 37 reached assembly.
+
+### Rust contract evidence
+
+VERIFIED in run 35031170818, **BoltFFI Rust experiment**, job **104589829119**:
+33 existing tests and these six candidate tests passed:
+
+- `native_core_version_is_exact`: **0.1.0**;
+- `sender_viewer_and_rejection_contract`: typed sender, numeric viewer journey,
+  one-viewer rule, invalid codes and unchanged state on rejection;
+- `mixed_layout_round_trip`: u8/u64/u16/String record;
+- `native_stream_capacity_drop_and_stop`: 100 produced, 8 accepted/consumed in
+  order, **92 dropped**, empty after drain, inactive after stop;
+- `async_future_cancel_releases_guard`: Pending poll makes active count 1;
+  dropping future returns count to 0; release returns 42; fallible path returns
+  typed SessionEnded; final count 0;
+- `padding_struct_and_vector`: u16/u32 values and vector round-trip.
+
+These are **Rust tests**, not JNI/Swift tests. Rust struct round-trip does not
+exercise generated foreign layout and does not resolve upstream #780. The exact
+version test has a real observed RED→GREEN; the other fixtures were written
+before implementation but their first recorded execution was GREEN.
+
+### Android result
+
+VERIFIED: run 35031170818, **BoltFFI generation (ubuntu-latest)**,
+job **104589829243**, generated Kotlin/JNI and real arm64-v8a/x86_64 libraries.
+`assembleDebug assembleRelease assembleDebugAndroidTest` ran with `set -e` and
+completed before SDK image installation and AVD creation. Thus debug, minified
+release and test-APK assembly succeeded; this is not minified runtime proof.
+Candidate Gradle dependencies and source contain **no JNA** or jna.library.path.
+Generated API has enums, BridgeError subclasses, AutoCloseable class handles,
+`fromCodes`, suspend waitValue, Flow and batch subscription methods.
+
+The subsequent **180-second emulator boot wait exited 124**. The following
+APK installation, `am instrument`, native contract and isolated close-stress
+invocations were not reached. The compact log did not capture emulator startup
+logs, so the reason for failure to boot is **UNKNOWN**; do not assert missing KVM
+or missing hardware as a proved cause. No `BOLT_PROOF` runtime marker exists.
+
+Android native `coreVersion()`, host contract parity, host struct layout,
+coroutine cancellation, Flow slow-consumer behavior and 500-iteration concurrent
+close stress are therefore **NOT EXECUTED**, not failed BoltFFI assertions.
+No Kotlin behavioral implementation was used to create CI success.
+
+### Apple result and reproducible blocker
+
+VERIFIED: real arm64 iOS device/simulator static libraries, XCFramework and
+Swift package generated; copied existing Xcode project consumed the candidate.
+Runs **35030494991** (job **104587724335**) and **35031170818** (job
+**104589829219**) both failed in `xcodebuild build` while compiling generated
+`Greenfield5BoltSpikeBoltFFI.swift` under **SWIFT_VERSION=6.0**:
+
+```text
+702:13: error: capture of 'cancel' with non-sendable type
+'(RustFutureHandle?) -> Void' ... in a '@Sendable' closure
+703:13: error: capture of 'free' with non-sendable type
+'(RustFutureHandle?) -> Void' ... in a '@Sendable' closure
+```
+
+Primary source at the selected release:
+[async.swift](https://github.com/boltffi/boltffi/blob/2e6320a6d92cb591d22b908477f3a47da7ebc9bc/boltffi_backend/templates/target/swift/async.swift)
+declares `cancel` and `free` as `@escaping` function parameters, not Sendable,
+and captures them in `withTaskCancellationHandler`'s onCancel closure.
+This is more specific than open **#778** (exported class Sendable): the observed
+failure is in the **generated async runtime**, before the cross-task class test.
+Do not claim #778 itself was reproduced or that adding unchecked Sendable to an
+app wrapper fixes these generated captures.
+
+Swift native version/journeys, errors, async success/cancel, stream delivery and
+padding tests were not executed because the app build failed. No placeholder
+archive or Swift fallback was accepted as native proof.
+
+### Source stability and native sizes
+
+Within each successful generation attempt, pack ran twice from identical input.
+Android **2** and Apple **6** source/header/modulemap/package files compared
+identically by SHA-256. Selected hashes also repeated across 9732a04 and a290404
+(the Rust exported input was unchanged). No binary reproducibility claim.
+
+| Generated artifact | SHA-256 |
+|---|---|
+| Kotlin Greenfield5BoltSpike.kt | `e827c2987b597482983e2a9cdd41ebd20468b1d3e9fa1c7b18ea1203341f3b15` |
+| Swift Greenfield5BoltSpikeBoltFFI.swift | `eff1b44ee0cf1333ac0e195c77ca5ee5c5261eed46ced90ad66b37f53317f938` |
+| C header (both platforms) | `9f867b017fc115f13e73decb40021b151e619140a3551f7aeb3d4f4de6ae337c` |
+| Apple modulemap (both slices) | `ab07f92803cfafe501d2fa0c121ef461c91a12f8e10f569ff16f2070fe80892a` |
+| Package.swift | `00636706682d6b09797545ebd8207e0239bbb9a4958f667bc47deedfc0d8c3e0` |
+
+Sizes published in run 35029785166 and subsequent source inventories:
+
+| Candidate release artifact | Bytes |
+|---|---:|
+| Android arm64-v8a .so | 5,701,768 |
+| Android x86_64 .so | 5,439,640 |
+| Apple arm64 device .a | 19,914,584 |
+| Apple arm64 simulator .a | 19,907,032 |
+
+No comparable control artifact measurement was collected on the same build
+configuration. **No size delta is claimed.** A static archive is not comparable
+to an Android shared library; candidate includes experimental probe APIs too.
+
+### Completed evidence comparison (supersedes checkpoint table)
+
+“NOT EXECUTED” below is an observed coverage boundary, not a fabricated result.
+
+| Dimension | UniFFI control | BoltFFI candidate |
+|---|---|---|
+| Android bridge mechanism | Host JNA proof + packaged Android Rust libraries | Generated JNI + two real Android ABIs; emulator invocation not reached |
+| JNA dependency | Runtime AAR + JVM test dependency | **Eliminated** in isolated candidate |
+| Android generation steps | cargo-ndk plus UniFFI bindgen/staging | `boltffi pack android` generates/stages Kotlin/JNI/artifacts |
+| Android custom glue | JNA paths, bindgen script, package/error-name conventions | JNA paths/proof plumbing eliminated; source-set/ABI configuration retained; emulator proof setup added |
+| Android debug | Historical control build proven; final-head results in PR | Assembly succeeded before emulator boot timeout |
+| Android minified release | Historical control build proven; final-head results in PR | Assembly succeeded; JNI-only keep rules remain; no release runtime proof |
+| Apple generation steps | Rust targets + bindgen + custom XCFramework script | `boltffi pack apple`, explicit device/simulator architectures |
+| Apple custom glue | Header staging, builtin module workaround, lipo/script, placeholder cleanup | Generator replaces header/modulemap/XCFramework glue; no custom lipo for single simulator slice; package/source/project wiring still needed |
+| Apple build | Retained native control | **FAIL twice**: generated async cancel/free captures under Swift 6 |
+| Apple tests | Control seven bridge tests; exact-version assertion strengthened after experiment | Not executed: app build fails |
+| Generated Kotlin API | Typed wrapper over JNA | Typed errors/enums/classes, suspend, Flow and batch; compilation reached assembly |
+| Generated Swift API | Typed wrapper, existing synchronous contract | Generated typed API; async runtime fails required compiler mode |
+| Typed errors | Existing mapped session errors | Rust mappings PASS; foreign delivery not executed |
+| Async behavior | Current production bridge synchronous; no comparable async spike | Rust future success/failure/drop PASS; Kotlin unexecuted; Swift compile blocker |
+| Cancellation | Not exercised across current bridge | Rust guard active 1→0 PASS; host cleanup not proved |
+| Slow stream consumer | No stream seam in current control | Rust capacity/drop test PASS; host slow consumer not executed |
+| Host buffering | Not applicable to synchronous control | Swift default template unbounded; Kotlin Flow suspending send; runtime backlog unmeasured |
+| Concurrent close | Not stressed in this experiment | Fixture written, not executed; #664 remains open and documented unsafe pattern |
+| Struct round-trip | No comparable layout probe | Rust mixed-width/vector PASS; foreign padding not exercised, #780 unresolved |
+| Generated source stability | Not regenerated twice in this comparison | 2 Android / 6 Apple files identical within repeat generation |
+| Native artifact sizes | Same-config measurements unavailable | Four artifact sizes above; no claimed improvement/delta |
+| Dependency count/change | 81 Cargo lock records, JNA dependencies | 82 Cargo lock records + separate locked CLI build; no JNA |
+| Known upstream blockers | Existing workarounds retained; no new control defect found | Observed Swift 6 async runtime failure; #664/#778/#771/#780/#871/#872 still open on refresh |
+| Migration complexity | No migration required | Package tooling simplifies builds, but compiler/safety workaround burden unacceptable at this pin |
+
+Specific Android glue: `System.loadLibrary` is **replaced by generated native
+loading**, not eliminated as a mechanism. UniFFI Error→Exception naming and
+package workaround disappear from the candidate; Kotlin package configuration
+still exists. Manual copying of generated Kotlin is unnecessary, but AGP Kotlin
+source-directory integration remains. Host-JNA proof is replaced by instrumented
+JNI proof infrastructure, not “no testing glue.”
+
+Specific Apple glue: generator creates headers/modulemaps/XCFramework/package;
+no handwritten builtin-module stripping was used. The candidate used only the
+same arm64 simulator target as current control, so it does **not** demonstrate
+multi-architecture lipo support. Existing placeholder deletion was still needed
+in the temporary comparison copy, not proof that production migration needs
+zero cleanup. Synchronized Xcode group/path integration remained. Crux-like
+packaging improvement is real but does not compensate for unbuildable async
+Swift code at the required language setting.
+
+### Ownership, streams and security decision
+
+Re-fetched #664, #778, #771, #780, #871 and #872: all OPEN. Passing a stress test
+would not disprove #664; here it did not execute at all. Current generated
+Kotlin wrappers check a closed flag separately from native invocation. A safe
+Greenfield5 invariant would require one owner to serialize **all** calls,
+cancellation and disposal, draining in-flight async/stream work before release.
+No such enforced host lifecycle was proved by this candidate. It must not be
+assumed merely because the Rust session uses a Mutex.
+
+The event fixture used one producer and one consumer for the upstream SPSC
+subscription. It is not a general concurrent event bus. Rust drop accounting
+is measured; Swift `.unbounded` host buffering remains source-verified, not a
+measured memory leak. Batch mode keeps explicit pull control in source but host
+boundedness/cleanup is unverified. No raw media or network operations were added.
+
+#872 is **NOT APPLICABLE TO CURRENT CANDIDATE** for user-defined foreign callback
+traits: none were exported. Generated internal async/stream callbacks still form
+part of the native safety surface. #871's message-field shape was not used;
+foreign error delivery was not proved. No finding is inferred away from a green
+Rust test.
+
+Security review: exact runtime/CLI pins, real lockfile, fixed paths/argument
+arrays, annotation escaping, read-only CI permissions, pinned actions and finite
+timeouts reviewed. Candidate added no handwritten unsafe. Generated FFI/JNI and
+upstream subscription code remain an unsafe trust boundary. The observed Swift
+compiler rejection and unresolved close contract prevent adoption; no unsafe
+patch or warning suppression used. Host native loading, R8 runtime, callback
+cleanup and concurrent-close execution remain incomplete audit areas, explicitly
+not signed off. No secrets, captured content, relay config or persistence added.
+
+### Final tree and spec disposition
+
+Disposable `spikes/boltffi` implementation, lockfile, generated outputs and
+candidate CI jobs were removed after the decision. Reproduction source remains
+in Git history at the experiment SHAs above; results remain in this report and
+GitHub check annotations. The Stack workflow is restored to the merged control.
+A useful control-test hardening remains: Swift `coreVersionIsExact` asserts
+**0.1.0**, replacing nonempty-only acceptance; it is not a bridge migration.
+
+| Requirement group | Disposition |
+|---|---|
+| Bootstrap/ref refresh/reuse research/plan | MET; same PR and branch, no donor survey repeated |
+| Exact pins, real lock, isolated shared-semantics candidate | MET during experiment; removed per DEFER final-tree policy |
+| Rust contract, future-drop, native bounded ring, padding fixture | MET at Rust level (39 tests) |
+| Android generation/ABI/debug/minified/test APK build | MET; not runtime proof |
+| Android JNI call/contracts/async/Flow/close | NOT EXECUTED: emulator boot timed out |
+| Apple package/generation/current project integration | MET through attempted app build |
+| Apple build/native contract/async/events | Build FAIL; tests NOT EXECUTED due concrete generated Swift 6 blocker |
+| Source stability/packaging analysis | MET for candidate; control repeat generation/size delta not measured |
+| Candidate security | Review performed; adoption safety gate NOT MET |
+| Final decision | DEFER with precise released-fix + rerun trigger; no adoption claim |
+| Cleanup/memory/final CI | Cleanup and memory in final tree; exact-head CI recorded in PR body |
+
+### Exactly one recommended next PR
+
+**Synthetic Android↔iOS Iroh/MoQ moving-media slice using retained UniFFI.**
+Keep it to one encoded moving test pattern, receiver rendering and selected
+path/RTT diagnostics, with direct and forced **Iroh connectivity relay** cases
+and a 60-second sustained run. No real capture, pairing, audio UX, browser relay
+or rooms. Physical-device results remain **UNVERIFIED — PHYSICAL DEVICE REQUIRED**
+until actually observed. The BoltFFI deferred-fix rerun is a trigger, not a
+second immediate PR recommendation.

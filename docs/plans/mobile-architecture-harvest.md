@@ -167,3 +167,16 @@ or weaken Swift settings. Re-run unchanged to confirm before precise DEFER.
 Android compiled source far enough to reject fixture Compose plugin without
 runtime; add existing pinned BOM + Compose runtime, not a BoltFFI workaround.
 Generated Kotlin confirms fromCodes factory, so add native invalid-code tests.
+
+## Phase C outcome — execution-backed DEFER
+
+Run 35031170818 (a290404) reproduced Swift 6 generated cancel/free capture errors
+seen in 35030494991. Android debug/release/test APK assembly proceeded to image
+install and AVD creation, then emulator boot timeout exit 124; no JNI proof.
+Decision: DEFER until a released matching CLI/runtime generates Swift-6-compatible
+async cancellation and resolves #664's concurrent-close contract; rerun native
+async/events/ownership acceptance then. Do not pretend omitted host tests passed.
+Remove disposable candidate/dependencies/workflow jobs; retain report/history.
+Keep one useful exact-version control-test assertion to reject Swift placeholders
+and trigger final exact-head Stack CI. Immediate next PR is synthetic moving
+Iroh/MoQ media using retained UniFFI, not another research PR or migration.

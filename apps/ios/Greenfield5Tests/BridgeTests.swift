@@ -4,15 +4,15 @@ import Testing
 
 /// Proves iOS can call Rust core through the UniFFI bridge (Issue #15).
 ///
-/// Uses stub Swift implementation when Rust XCFramework absent, and real
-/// UniFFI bindings when CI builds Rust staticlib + XCFramework. Either way,
-/// proves narrow bridge API works and session semantics preserved.
+/// CI must generate and link the real Rust XCFramework before these tests.
+/// The exact version assertion rejects the committed no-toolchain placeholder;
+/// a local stub-only build is not native execution evidence (PR #18).
 @Suite("Rust bridge")
 struct BridgeTests {
-    @Test("core version is present")
-    func coreVersionPresent() {
+    @Test("core version is exactly 0.1.0")
+    func coreVersionIsExact() {
         let v = GreenfieldRustBridge.getCoreVersion()
-        #expect(!v.isEmpty)
+        #expect(v == "0.1.0")
     }
 
     @Test("sender journey reaches active via typed API")

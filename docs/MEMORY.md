@@ -691,3 +691,41 @@ this research PR open for independent review; final-head run IDs go in PR body.
 and LICENSE-APACHE are byte-identical Apache text (`cmp` exit 0). Report flags
 this provenance anomaly; MIT election requires upstream clarification. No copy
 or dependency adoption occurred.
+
+## 2026-09-15 — Executed BoltFFI A/B: DEFER (PR #18 continuation)
+
+**Done:** Supersedes the initial BLOCKED checkpoint above. Same branch
+`arena/01a0a701-greenfield5`, initial PR head 5ca0dff, main/control 6c85f9a.
+Executed isolated BoltFFI 0.30.1 CLI/runtime at release tag
+2e6320a6d92cb591d22b908477f3a47da7ebc9bc in GitHub Linux/macOS CI, sharing existing
+Rust semantics. Report records attempt SHAs, jobs, hashes and measurements.
+Removed disposable candidate, dependencies and workflow jobs after DEFER;
+production UniFFI unchanged. Retained stricter iOS exact-0.1.0 bridge test.
+**Verified:** Candidate Rust 33+6 tests PASS; real Android two-ABI JNI libraries
+and Apple device/simulator XCFramework generated; repeat sources 2/6 stable.
+At a290404 / Stack 35031170818 Android assembled debug, minified release and
+instrumentation APK before emulator boot timeout 124; native tests not reached.
+Swift 6 build failed on generated non-Sendable cancel/free captures, reproduced
+unchanged from 9732a04 / Stack 35030494991. No Swift native tests executed.
+Local final-tree verify PASS 15/0/3; selftest PASS 128/128; diff check clean.
+Skips: absent shellcheck, permitted app-stack transition, AgentShield zero files.
+Exact-head control CI results belong in PR body after execution, not inferred
+from earlier green control or candidate Rust jobs.
+**Decision:** DEFER pending released Swift-6-compatible generated async runtime
+and resolution of #664's documented concurrent-close contract, then native
+async/events/ownership rerun. ADR-0007 remains in force. No unchecked Sendable,
+generated patch or unsafe lifecycle workaround. Packaging improved, but required
+Apple build failed; full parity and a material overall advantage not established.
+**Reviews:** Sequential code/security/spec review. Candidate compile blocker and
+ownership risk prevent adoption; final tree has no introduced HIGH/CRITICAL
+finding. Host stream/backlog, cancellation, foreign layouts and concurrent close
+remain unexecuted, not signed off. No runtime dependency/size advantage claimed.
+**Dead ends:** Incorrect action pin; opaque Android setup failure; explicit SDK37
+provision; default Apple targets; wrong Kotlin/Swift source paths; missing Compose
+runtime. Fixed harness issues were not treated as upstream defects. Emulator boot
+cause unknown because its separate log was not published. Local tool absence was
+routing, not a blocker. Source investigation ties Swift diagnostic to exact tag.
+**Next:** Exactly one bounded synthetic Android↔iOS Iroh/MoQ moving-media PR,
+retaining UniFFI. Leave PR #18 open for independent review. Physical results stay
+UNVERIFIED — PHYSICAL DEVICE REQUIRED. Deferred BoltFFI fix is a later rerun
+trigger, not a second immediate PR.
