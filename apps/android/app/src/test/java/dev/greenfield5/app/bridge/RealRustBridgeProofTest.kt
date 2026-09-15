@@ -19,7 +19,13 @@ import org.junit.Test
  * 4. Fails closed if library not loaded when in CI (GITHUB_ACTIONS or CI env set)
  *
  * Local dev without Rust toolchain:
- * - When CI env not set and library not loaded, test is skipped via Assume (allows local fallback)
+ * - When CI env not set and library not loaded, the strict real-Rust assertions
+ *   are not reached: the test prints a diagnostic and returns early, so JUnit
+ *   reports it as PASSED, not skipped. There is no Assume — a "skipped" count in
+ *   a test report is never this path.
+ * - CI is detected by *presence* of CI/GITHUB_ACTIONS. The Gradle test worker
+ *   inherits both from the Gradle process, so nothing has to be forwarded in
+ *   app/build.gradle.kts, and a machine that genuinely exports CI stays strict.
  * - When library is present locally (cargo build --release), test will still prove real Rust
  */
 class RealRustBridgeProofTest {

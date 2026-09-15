@@ -259,6 +259,34 @@ jobs:
           PY
             exit 1
           fi
+          # Fail closed on CI-mode detection. build.gradle.kts no longer
+          # manufactures CI/GITHUB_ACTIONS, so RealRustBridgeProofTest now relies
+          # on the Gradle test worker inheriting them from this runner. If that
+          # inheritance ever broke, the strict real-Rust assertions would stop
+          # running and the job would still go green — a check that passes when
+          # its input is missing. Assert the proof really ran in CI mode rather
+          # than trusting a zero exit code to mean it.
+          if ! grep -q 'RealRustBridgeProof: isCI=true' /tmp/android-gradle-real-proof.txt; then
+            echo "---- CI-mode assertion failed ----"
+            echo "RealRustBridgeProofTest did not report isCI=true, so the strict"
+            echo "real-Rust assertions cannot have run and this job must not pass."
+            grep -n 'RealRustBridgeProof:' /tmp/android-gradle-real-proof.txt || echo "(no RealRustBridgeProof line in the proof log at all)"
+            python3 - /tmp/android-gradle-real-proof.txt 'Android proof did not run in CI mode' <<'PY'
+          import re, sys
+          path, title = sys.argv[1], sys.argv[2]
+          keep = re.compile(r'RealRustBridgeProof:|jna\.library\.path=|java\.library\.path=|LD_LIBRARY_PATH=|UNREADABLE|What went wrong|FAILED')
+          try:
+              lines = open(path, 'r', errors='replace').read().splitlines()
+          except OSError as exc:
+              lines = ['proof log UNREADABLE %s: %s' % (path, exc)]
+          hits = [ln.strip() for ln in lines if keep.search(ln)][-20:]
+          data = 'isCI=true NOT FOUND - strict real-Rust assertions did not run\n' + '\n'.join(hits)[-800:]
+          enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::error title={t}::{enc}')
+          PY
+            exit 1
+          fi
           echo "Real Rust proof passed, now running all unit tests + assembleDebug"
           if ! ./gradlew testDebugUnitTest assembleDebug --stacktrace --no-daemon -Djna.library.path=${{ github.workspace }}/core/target/release >/tmp/android-gradle-debug.txt 2>&1; then cat /tmp/android-gradle-debug.txt; tail -n 300 /tmp/android-gradle-debug.txt; python3 - /tmp/android-gradle-debug.txt 'Android gradle debug' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
@@ -284,6 +312,49 @@ jobs:
           echo "---- Real proof test output ----"
           find app/build/test-results -name "*RealRustBridgeProofTest*" -type f | xargs cat 2>&1 || true
           grep -R "RealRustBridgeProof" app/build/test-results 2>&1 | head -n 100 || true
+          # Observability, not verification. On a *successful* run the only CI
+          # channel a reviewer or agent can still read is the check-run
+          # annotation set — raw job logs and artifact downloads are both served
+          # from a blob host that is unreachable from the sandbox. Without this,
+          # a green Android job proves only "Gradle exited 0" and the real-Rust
+          # evidence Issue #15 criterion 10 asks for (libLoaded / version /
+          # loadError at the exact head) cannot be quoted by anyone. Publish the
+          # bridge proof's own diagnostics plus the JUnit tally as one bounded
+          # notice. This cannot weaken a gate: both failure paths above already
+          # `exit 1` before reaching here, the publisher is guarded so a
+          # reporting error can never turn a green build red, and an empty
+          # payload announces itself as NOT EVIDENCE rather than passing silently.
+          python3 - /tmp/android-gradle-real-proof.txt 'Android real Rust proof PASSED' <<'PY' || true
+          import glob, re, sys
+          import xml.etree.ElementTree as ET
+          path, title = sys.argv[1], sys.argv[2]
+          keep = re.compile(r'RealRustBridgeProof:|jna\.library\.path=|java\.library\.path=|LD_LIBRARY_PATH=|DYLD_LIBRARY_PATH=')
+          proof, junit = [], []
+          # JUnit XML is the authoritative record: testsuite attributes carry the
+          # pass/fail tally and <system-out> carries what the test printed.
+          for xml_path in sorted(glob.glob('app/build/test-results/**/*RealRustBridgeProofTest*.xml', recursive=True)):
+              try:
+                  suite = ET.parse(xml_path).getroot()
+                  junit.append('junit %s: tests=%s failures=%s errors=%s skipped=%s' % (suite.get('name') or xml_path, suite.get('tests'), suite.get('failures'), suite.get('errors'), suite.get('skipped')))
+                  for out in suite.iter('system-out'):
+                      proof += [ln.strip() for ln in (out.text or '').splitlines() if keep.search(ln)]
+              except Exception as exc:
+                  junit.append('junit %s: UNPARSED (%s)' % (xml_path, exc))
+          if not proof:
+              # Fall back to the Gradle console log (testLogging.showStandardStreams).
+              try:
+                  proof = [ln.strip() for ln in open(path, 'r', errors='replace').read().splitlines() if keep.search(ln)]
+              except OSError as exc:
+                  proof = ['gradle log UNREADABLE %s: %s' % (path, exc)]
+          proof = proof[-6:]
+          if not any(ln.startswith('RealRustBridgeProof:') for ln in proof):
+              proof.insert(0, 'WARNING: no RealRustBridgeProof line captured - NOT EVIDENCE')
+          if not junit:
+              junit.append('WARNING: no RealRustBridgeProofTest JUnit XML found - NOT EVIDENCE')
+          enc = '\n'.join(proof + junit)[:900].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::notice title={t}::{enc}')
+          PY
 
       - name: Release assembly (proves R8 keep rules)
         run: |
@@ -403,6 +474,44 @@ jobs:
           exit 1; fi
           echo "XCFramework generated, listing:"
           find Greenfield5/Bridge/Generated -type f -print 2>&1 || true
+          # Same observability rationale as the Android job: artifact downloads
+          # and raw logs are unreachable from the sandbox, so without a
+          # success-path notice nobody can quote what iOS actually generated at
+          # this head. Sizes matter here — the repository commits 8-byte
+          # `!<arch>` placeholder archives, so a real XCFramework is only
+          # distinguishable from a leftover placeholder by byte count, and this
+          # notice says so explicitly instead of letting a placeholder pass as
+          # a build product. Bounded, guarded, cannot affect the gate result.
+          python3 - 'iOS generated Swift + XCFramework' <<'PY' || true
+          import os, sys
+          title, root = sys.argv[1], 'Greenfield5/Bridge/Generated'
+          files, warned = [], []
+          for dirpath, _dirs, names in os.walk(root):
+              for name in sorted(names):
+                  full = os.path.join(dirpath, name)
+                  try:
+                      size = os.path.getsize(full)
+                  except OSError as exc:
+                      warned.append('UNSTATABLE %s: %s' % (full, exc))
+                      continue
+                  files.append((os.path.relpath(full, root), size))
+                  if name.endswith(('.a', '.dylib', '.framework')) or '.xcframework' in full:
+                      # An 8-byte `!<arch>` archive is a committed placeholder,
+                      # not a compiled slice.
+                      if size <= 64:
+                          warned.append('PLACEHOLDER-SIZED %s = %dB (<=64B)' % (os.path.relpath(full, root), size))
+          files.sort()
+          body = ['generated files: %d under %s' % (len(files), root)]
+          body += ['%s=%dB' % (rel, size) for rel, size in files[:18]]
+          if len(files) > 18:
+              body.append('... %d more' % (len(files) - 18))
+          if not files:
+              warned.append('NO GENERATED FILES FOUND - NOT EVIDENCE')
+          body += warned[:4]
+          enc = '\n'.join(body)[:900].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::notice title={t}::{enc}')
+          PY
 
       - name: Build iOS app (simulator)
         run: |
@@ -567,6 +676,38 @@ jobs:
             exit 1
           fi
           tail -n 200 /tmp/ios-xcode-test.txt || true
+          # Same observability rationale as the other two notices: the uploaded
+          # ios-test-log artifact cannot be downloaded from the sandbox, so a
+          # green iOS job otherwise proves only "xcodebuild exited 0". This
+          # publishes the markers that distinguish a real test run from a
+          # vacuous one — TEST SUCCEEDED, the destination actually used, the
+          # executed-test count, and each BridgeTests case — and it says so
+          # loudly when the count is missing. Bounded, guarded, cannot change
+          # the gate result.
+          python3 - /tmp/ios-xcode-test.txt 'iOS bridge tests PASSED' <<'PY' || true
+          import re, sys
+          path, title = sys.argv[1], sys.argv[2]
+          keep = re.compile(r'\*\* TEST SUCCEEDED \*\*|\*\* TEST FAILED \*\*|Test Suite .* (passed|failed)|Executed \d+ tests?|Test Case .* (passed|failed)|Testing started on')
+          try:
+              lines = open(path, 'r', errors='replace').read().splitlines()
+          except OSError as exc:
+              lines = []
+              print('::notice title=%s::iOS test log UNREADABLE %s: %s - NOT EVIDENCE' % (title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C'), path, exc))
+              sys.exit(0)
+          hits = [ln.strip() for ln in lines if keep.search(ln)]
+          # A green xcodebuild with zero executed tests is a false proof, so the
+          # absence of a count is reported rather than glossed over.
+          warns = []
+          if not any(re.search(r'Executed \d+ tests?', ln) for ln in hits):
+              warns.append('WARNING: no "Executed N tests" count found - NOT EVIDENCE')
+          if not any('** TEST SUCCEEDED **' in ln for ln in hits):
+              warns.append('WARNING: no "** TEST SUCCEEDED **" marker found - NOT EVIDENCE')
+          cases = [ln for ln in hits if ln.startswith('Test Case')][-8:]
+          tallies = [ln for ln in hits if re.search(r'Executed \d+ tests?|Test Suite .* (passed|failed)|Testing started on|\*\* TEST', ln)][-8:]
+          enc = '\n'.join(warns + tallies + cases)[:900].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::notice title={t}::{enc}')
+          PY
 
       - name: Upload iOS test log
         if: always()

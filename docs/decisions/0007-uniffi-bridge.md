@@ -74,7 +74,30 @@ Adopt **UniFFI 0.32.1** as the pinned FFI mechanism for Greenfield5's native↔R
 - Generated bindings are large and must be committed or generated in CI; placeholder stubs needed for local builds without Rust toolchain.
 - JNA dependency on Android adds ~1MB AAR and requires keep rules.
 - XCFramework generation requires multiple Rust targets and macOS runner minutes (~10x cost on private repo).
-- `forbid(unsafe_code)` had to be relaxed to `deny(unsafe_code)` to allow UniFFI scaffolding which contains unsafe FFI shims (allowed via `#[allow(unsafe_code)]` for scaffolding module only).
+- `forbid(unsafe_code)` could not be retained. The unsafe boundary is real but
+  narrower in guarantee than "crate-level deny plus one module allow":
+  - UniFFI's `setup_scaffolding!()` must be invoked at the **crate root** — its
+    expansion emits `pub struct UniFfiTag`, which UniFFI's derive output
+    references as `crate::UniFfiTag` (uniffi-rs v0.32.1:
+    `uniffi_macros/src/enum_.rs`, `record.rs`, `ffiops.rs`) — and that expansion
+    contains `pub unsafe extern "C" fn` FFI shims
+    (`uniffi_macros/src/setup_scaffolding.rs`).
+  - A lint attribute cannot be scoped to a macro invocation: `#[allow(unsafe_code)]`
+    placed directly on `setup_scaffolding!()` was reported as `unused_attributes`
+    under `-D warnings` with Rust 1.98 (commit d318aa9), so it never reached the
+    expanded items.
+  - Therefore `core/src/lib.rs` carries a **crate-level** `#![allow(unsafe_code)]`,
+    with `#[deny(unsafe_code)]` re-applied to the handwritten `seam` and `session`
+    modules and `#[allow(unsafe_code)]` on `uniffi_api` (UniFFI derive/export
+    output).
+  - Precise consequence: `unsafe` is denied in all handwritten product logic, but
+    the crate is **deny-by-declaration, not deny-by-default** — a new module that
+    omits its own `#[deny(unsafe_code)]` inherits the crate-level allow. No
+    handwritten `unsafe` exists in the crate today. See follow-up 7.
+  - Narrowing was evaluated against uniffi-rs v0.32.1 and rejected: it requires
+    moving the scaffolding off the crate root, which the `crate::UniFfiTag`
+    contract and the `#[macro_export]`ed `uniffi_reexport_scaffolding!` (whose body
+    resolves `$crate::uniffi_reexport_hack`) both forbid.
 
 ### Follow-ups
 
@@ -84,3 +107,12 @@ Adopt **UniFFI 0.32.1** as the pinned FFI mechanism for Greenfield5's native↔R
 4. Add `ACCESS_LOCAL_NETWORK` handling for Local mode at targetSdk 37 (flagged in research).
 5. Proceed to MoQ/Iroh synthetic-media spike (ADR-0005 follow-ups) using same bridge.
 6. Evaluate Gobley plugin if KMM or more complex Android targets needed.
+7. Restore a deny-by-default unsafe boundary when upstream allows it. The
+   crate-level `#![allow(unsafe_code)]` in `core/src/lib.rs` exists only because
+   UniFFI's scaffolding must sit at the crate root and a lint attribute cannot be
+   scoped to a macro invocation. Re-evaluate on any UniFFI upgrade that either
+   emits its own `#[allow(unsafe_code)]` inside the scaffolding expansion, or
+   supports scaffolding in a module without breaking `crate::UniFfiTag`. Until
+   then, every new module declared in `core/src/lib.rs` must carry an explicit
+   `#[deny(unsafe_code)]`, and that requirement is stated in the source comment
+   above the crate-level attributes.
