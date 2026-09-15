@@ -73,3 +73,17 @@ dependencies {
     // For JVM unit tests that load host Rust library via JNA (bridge proof without Android NDK)
     testImplementation("net.java.dev.jna:jna:5.14.0")
 }
+
+tasks.withType<Test> {
+    // Host Rust cdylib for JVM bridge-proof test: core/target/release/libgreenfield5_core.so
+    // Provide via JNA library path so System.loadLibrary and JNA can find it in CI.
+    // Local dev without Rust toolchain will still work via fallback, but CI proof test will fail if not found.
+    val coreReleaseDir = file("../../core/target/release").absolutePath
+    systemProperty("jna.library.path", coreReleaseDir)
+    systemProperty("java.library.path", coreReleaseDir)
+    environment("LD_LIBRARY_PATH", coreReleaseDir)
+    environment("DYLD_LIBRARY_PATH", coreReleaseDir)
+    // Ensure CI env is visible to tests
+    environment("CI", System.getenv("CI") ?: "")
+    environment("GITHUB_ACTIONS", System.getenv("GITHUB_ACTIONS") ?: "")
+}

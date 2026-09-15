@@ -37,7 +37,6 @@
 #![allow(unsafe_code)]
 #![allow(unused_attributes)]
 #![allow(missing_docs)]
-#![allow(clippy::all)]
 
 #[deny(unsafe_code)]
 #[deny(missing_docs)]
@@ -45,6 +44,8 @@ pub mod seam;
 #[deny(unsafe_code)]
 #[deny(missing_docs)]
 pub mod session;
+// UniFFI scaffolding contains generated unsafe FFI shims and may trigger clippy lints
+// that are not meaningful for generated code. Scope allow to this module only.
 #[allow(unsafe_code)]
 #[allow(missing_docs)]
 #[allow(clippy::all)]
