@@ -1,0 +1,4 @@
+# Keep generated Kotlin bindings in the stable package consumed by the Android bridge.
+# UniFFI 0.32.1 discovers this per-crate config through cargo metadata.
+[bindings.kotlin]
+package_name = "uniffi.greenfield5"

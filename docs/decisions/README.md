@@ -26,6 +26,7 @@ repository appends its own product and stack decisions after them.
 | [0004](0004-lifecycle-config-stack-guard.md) | Project lifecycle config replaces the hard-coded no-app-stack guard | accepted | 2026-09-06 |
 | [0005](0005-rust-native-moq-iroh-architecture.md) | Adopt a Rust core with native mobile apps and MoQ over Iroh | accepted | 2026-09-13 |
 | [0006](0006-application-stack.md) | Greenfield5 application stack, repository layout, and implementation transition | accepted | 2026-09-14 |
+| [0007](0007-uniffi-bridge.md) | UniFFI as the native↔Rust bridge mechanism | accepted | 2026-09-14 |
 
 The ADR that records a project's **implementation stack** is referenced by
 `STACK_DECISION_ADR` in [`../../config/project.env`](../../config/project.env),

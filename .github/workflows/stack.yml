@@ -1,11 +1,12 @@
-# Stack CI for the application tree (ADR-0006).
+# Stack CI for the application tree (ADR-0006, ADR-0007).
+# Android real-FFI proof uses core/uniffi.toml to keep generated bindings in the app-owned package.
 #
 # Runs ALONGSIDE — never instead of — the foundation gate in verify.yml.
 # The required status contexts stay exactly the two defined in
 # config/main-ruleset.json ("Foundation gate", "Independent checks"); this
 # workflow is deliberately non-required until the stack stabilizes
-# (ADR-0006 follow-up 8). iOS has no job here: macOS-runner CI is a recorded
-# follow-up, and the project files are validated structurally instead.
+# (ADR-0006 follow-up 8). iOS job added in Issue #15 to provide honest
+# verification for the native↔Rust bridge.
 name: Stack
 
 on:
@@ -14,11 +15,13 @@ on:
     paths:
       - core/**
       - apps/android/**
+      - apps/ios/**
       - .github/workflows/stack.yml
   pull_request:
     paths:
       - core/**
       - apps/android/**
+      - apps/ios/**
       - .github/workflows/stack.yml
   workflow_dispatch:
 
@@ -27,6 +30,7 @@ permissions:
 
 concurrency:
   group: stack-${{ github.ref }}
+  # A newer head supersedes stale platform work on the same ref; never let a wedged run block CI.
   cancel-in-progress: true
 
 jobs:
@@ -71,11 +75,36 @@ jobs:
       - name: Lint
         run: |
           set -euo pipefail
-          if ! cargo clippy --all-targets -- -D warnings >/tmp/clippy.txt 2>&1; then
-            python3 - /tmp/clippy.txt 'cargo clippy findings' <<'PY'
+          if ! cargo clippy --locked --all-targets -- -D warnings >/tmp/clippy.txt 2>&1; then
+            echo "---- clippy.txt size $(wc -c </tmp/clippy.txt) ----"
+            echo "---- tail 200 ----"
+            tail -n 200 /tmp/clippy.txt || true
+            echo "---- end tail ----"
+            python3 - /tmp/clippy.txt 'cargo clippy tail200' <<'PY'
+          import sys, subprocess, pathlib
+          path,title=sys.argv[1],sys.argv[2]
+          # last 200 lines, limited to 4000 chars to fit GH annotation limit
+          try:
+              out=subprocess.check_output(['tail','-n','200',path], text=True, errors='replace')
+          except Exception as e:
+              out=f'tail failed: {e}\n'+pathlib.Path(path).read_text(errors='replace')[-4000:]
+          data=out[-4000:]
+          enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+          t=title.replace('%','%25').replace(':','%3A').replace(',','%2C')
+          print(f'::error title={t}::{enc}')
+          PY
+            python3 - /tmp/clippy.txt 'cargo clippy findings tail' <<'PY'
           import sys
           path, title = sys.argv[1], sys.argv[2]
           data = open(path, 'rb').read().decode('utf-8', 'replace')[-60000:]
+          enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          title_enc = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::error title={title_enc}::{enc}')
+          PY
+            python3 - /tmp/clippy.txt 'cargo clippy findings head' <<'PY'
+          import sys
+          path, title = sys.argv[1], sys.argv[2]
+          data = open(path, 'rb').read().decode('utf-8', 'replace')[:60000]
           enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           title_enc = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
           print(f'::error title={title_enc}::{enc}')
@@ -86,7 +115,7 @@ jobs:
       - name: Test
         run: |
           set -euo pipefail
-          if ! cargo test >/tmp/test.txt 2>&1; then
+          if ! cargo test --locked >/tmp/test.txt 2>&1; then
             python3 - /tmp/test.txt 'cargo test output' <<'PY'
           import sys
           path, title = sys.argv[1], sys.argv[2]
@@ -114,7 +143,598 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Show Rust toolchain (for UniFFI bridge)
+        working-directory: core
+        run: |
+          rustup show
+          cargo --version
+          rustc --version
+
+      - name: Install cargo-ndk
+        working-directory: core
+        run: |
+          set -euo pipefail
+          # Pinned to 3.5.4 per ADR-0007 review; fail closed if pinned version cannot be installed
+          cargo install cargo-ndk --version 3.5.4 --locked
+          cargo ndk --version
+
+      - name: Set up Android NDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          packages: ndk;28.0.12916984
+
+      - name: Build Rust core for Android (arm64 + x86_64 for CI)
+        working-directory: core
+        env:
+          ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/28.0.12916984
+          ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/28.0.12916984
+          NDK_HOME: /usr/local/lib/android/sdk/ndk/28.0.12916984
+        run: |
+          set -euo pipefail
+          echo "NDK env: ANDROID_NDK_HOME=$ANDROID_NDK_HOME ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT"
+          rustup target add aarch64-linux-android x86_64-linux-android
+          if ! cargo ndk -t arm64-v8a -t x86_64 --platform 29 -o ../apps/android/app/src/main/jniLibs build --release --locked >/tmp/android-ndk.txt 2>&1; then
+            echo "---- android-ndk.txt size $(wc -c </tmp/android-ndk.txt) ----"
+            tail -n 200 /tmp/android-ndk.txt || true
+            python3 - /tmp/android-ndk.txt 'Android cargo ndk tail200' <<'PY'
+          import subprocess, pathlib, sys
+          path,title=sys.argv[1],sys.argv[2]
+          try:
+              out=subprocess.check_output(['tail','-n','200',path], text=True, errors='replace')
+          except Exception as e:
+              out=f'tail failed: {e}\n'+pathlib.Path(path).read_text(errors='replace')[-4000:]
+          data=out[-4000:]
+          enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+          t=title.replace('%','%25').replace(':','%3A').replace(',','%2C')
+          print(f'::error title={t}::{enc}')
+          PY
+            python3 - /tmp/android-ndk.txt 'Android cargo ndk build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            exit 1
+          fi
+          ls -R ../apps/android/app/src/main/jniLibs
+
+      - name: Generate Kotlin bindings via UniFFI
+        working-directory: core
+        run: |
+          set -euo pipefail
+          # Local builds keep a committed pure-Kotlin fallback. CI must remove it
+          # before generation so the app compiles only against real UniFFI bindings.
+          rm -f ../apps/android/app/src/main/java/uniffi/greenfield5/greenfield5.kt
+          rm -rf ../apps/android/app/src/main/java/uniffi/greenfield5_core
+          if ! cargo build --release --locked >/tmp/android-host-build.txt 2>&1; then cat /tmp/android-host-build.txt; python3 - /tmp/android-host-build.txt 'Android host build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          if ! cargo run --locked --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.so --language kotlin --out-dir ../apps/android/app/src/main/java/ >/tmp/android-bindgen.txt 2>&1; then cat /tmp/android-bindgen.txt; python3 - /tmp/android-bindgen.txt 'Android Kotlin bindgen' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          ls -R ../apps/android/app/src/main/java/uniffi || true
+          echo "Generated Kotlin bindings:"
+          find ../apps/android/app/src/main/java/uniffi -type f -print 2>&1 | head -n 20 || true
+          GENERATED_KT=../apps/android/app/src/main/java/uniffi/greenfield5/greenfield5_core.kt
+          test -f "$GENERATED_KT"
+          grep -q '^package uniffi.greenfield5$' "$GENERATED_KT"
+          if [ -d ../apps/android/app/src/main/java/uniffi/greenfield5_core ]; then
+            echo "ERROR: UniFFI ignored core/uniffi.toml package_name; refusing stub/default-package fallback" >&2
+            exit 1
+          fi
+
       # The wrapper properties pin Gradle 9.6.1 with its SHA-256 checksum;
       # AGP 9.4.0 / Kotlin 2.4.20 pins live in gradle/libs.versions.toml.
-      - name: Unit tests and debug assembly
-        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace --no-daemon
+      - name: Unit tests and debug assembly (with Rust bridge)
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/core/target/release
+          DYLD_LIBRARY_PATH: ${{ github.workspace }}/core/target/release
+        run: |
+          set -euo pipefail
+          echo "Host Rust cdylib for JVM bridge-proof test:"
+          ls -lh ../../core/target/release/libgreenfield5_core.* 2>&1 || true
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+          echo "Checking JNA library path via gradle test config (build.gradle.kts sets jna.library.path)"
+          if ! ./gradlew testDebugUnitTest --tests "dev.greenfield5.app.bridge.RealRustBridgeProofTest" --stacktrace --no-daemon -Djna.library.path=${{ github.workspace }}/core/target/release >/tmp/android-gradle-real-proof.txt 2>&1; then
+            echo "---- RealRustBridgeProofTest failed ----"
+            cat /tmp/android-gradle-real-proof.txt
+            tail -n 500 /tmp/android-gradle-real-proof.txt || true
+            python3 - /tmp/android-gradle-real-proof.txt 'Android real Rust proof' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            # GitHub keeps only the FIRST 4096 characters of an annotation
+            # message and the Gradle distribution banner fills that window, so
+            # the 60000-character payload above never reaches the failure text.
+            # Publish a second, bounded annotation holding only the lines that
+            # carry the cause (the bridge proof's own diagnostics, which
+            # build.gradle.kts now surfaces via testLogging) plus the log tail.
+            python3 - /tmp/android-gradle-real-proof.txt 'Android real Rust proof digest' <<'PY'
+          import re, sys
+          path, title = sys.argv[1], sys.argv[2]
+          keep = re.compile(r'RealRustBridgeProof:|jna\.library\.path=|java\.library\.path=|LD_LIBRARY_PATH=|UnsatisfiedLinkError|ExceptionInInitializerError|NoClassDefFoundError|AssertionError|ComparisonFailure|FAILED|What went wrong')
+          lines = open(path, 'r', errors='replace').read().splitlines()
+          hits = [ln for ln in lines if keep.search(ln)][-30:]
+          data = '\n'.join(hits)[-900:] + '\n---- gradle tail ----\n' + '\n'.join(lines[-8:])[-300:]
+          enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::error title={t}::{enc}')
+          PY
+            exit 1
+          fi
+          # Fail closed on CI-mode detection. build.gradle.kts no longer
+          # manufactures CI/GITHUB_ACTIONS, so RealRustBridgeProofTest now relies
+          # on the Gradle test worker inheriting them from this runner. If that
+          # inheritance ever broke, the strict real-Rust assertions would stop
+          # running and the job would still go green — a check that passes when
+          # its input is missing. Assert the proof really ran in CI mode rather
+          # than trusting a zero exit code to mean it.
+          if ! grep -q 'RealRustBridgeProof: isCI=true' /tmp/android-gradle-real-proof.txt; then
+            echo "---- CI-mode assertion failed ----"
+            echo "RealRustBridgeProofTest did not report isCI=true, so the strict"
+            echo "real-Rust assertions cannot have run and this job must not pass."
+            grep -n 'RealRustBridgeProof:' /tmp/android-gradle-real-proof.txt || echo "(no RealRustBridgeProof line in the proof log at all)"
+            python3 - /tmp/android-gradle-real-proof.txt 'Android proof did not run in CI mode' <<'PY'
+          import re, sys
+          path, title = sys.argv[1], sys.argv[2]
+          keep = re.compile(r'RealRustBridgeProof:|jna\.library\.path=|java\.library\.path=|LD_LIBRARY_PATH=|UNREADABLE|What went wrong|FAILED')
+          try:
+              lines = open(path, 'r', errors='replace').read().splitlines()
+          except OSError as exc:
+              lines = ['proof log UNREADABLE %s: %s' % (path, exc)]
+          hits = [ln.strip() for ln in lines if keep.search(ln)][-20:]
+          data = 'isCI=true NOT FOUND - strict real-Rust assertions did not run\n' + '\n'.join(hits)[-800:]
+          enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::error title={t}::{enc}')
+          PY
+            exit 1
+          fi
+          echo "Real Rust proof passed, now running all unit tests + assembleDebug"
+          if ! ./gradlew testDebugUnitTest assembleDebug --stacktrace --no-daemon -Djna.library.path=${{ github.workspace }}/core/target/release >/tmp/android-gradle-debug.txt 2>&1; then cat /tmp/android-gradle-debug.txt; tail -n 300 /tmp/android-gradle-debug.txt; python3 - /tmp/android-gradle-debug.txt 'Android gradle debug' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            # GitHub keeps only the FIRST 4096 characters of an annotation
+            # message and the Gradle distribution banner fills that window, so
+            # the 60000-character payload above never reaches the failure text.
+            # Publish a second, bounded annotation holding only the lines that
+            # carry the cause (the bridge proof's own diagnostics, which
+            # build.gradle.kts now surfaces via testLogging) plus the log tail.
+            python3 - /tmp/android-gradle-debug.txt 'Android gradle debug digest' <<'PY'
+          import re, sys
+          path, title = sys.argv[1], sys.argv[2]
+          keep = re.compile(r'RealRustBridgeProof:|jna\.library\.path=|java\.library\.path=|LD_LIBRARY_PATH=|UnsatisfiedLinkError|ExceptionInInitializerError|NoClassDefFoundError|AssertionError|ComparisonFailure|FAILED|What went wrong')
+          lines = open(path, 'r', errors='replace').read().splitlines()
+          hits = [ln for ln in lines if keep.search(ln)][-30:]
+          data = '\n'.join(hits)[-900:] + '\n---- gradle tail ----\n' + '\n'.join(lines[-8:])[-300:]
+          enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          echo "---- Real proof test output ----"
+          find app/build/test-results -name "*RealRustBridgeProofTest*" -type f | xargs cat 2>&1 || true
+          grep -R "RealRustBridgeProof" app/build/test-results 2>&1 | head -n 100 || true
+          # Observability, not verification. On a *successful* run the only CI
+          # channel a reviewer or agent can still read is the check-run
+          # annotation set — raw job logs and artifact downloads are both served
+          # from a blob host that is unreachable from the sandbox. Without this,
+          # a green Android job proves only "Gradle exited 0" and the real-Rust
+          # evidence Issue #15 criterion 10 asks for (libLoaded / version /
+          # loadError at the exact head) cannot be quoted by anyone. Publish the
+          # bridge proof's own diagnostics plus the JUnit tally as one bounded
+          # notice. This cannot weaken a gate: both failure paths above already
+          # `exit 1` before reaching here, the publisher is guarded so a
+          # reporting error can never turn a green build red, and an empty
+          # payload announces itself as NOT EVIDENCE rather than passing silently.
+          python3 - /tmp/android-gradle-real-proof.txt 'Android real Rust proof PASSED' <<'PY' || true
+          import glob, re, sys
+          import xml.etree.ElementTree as ET
+          path, title = sys.argv[1], sys.argv[2]
+          keep = re.compile(r'RealRustBridgeProof:|jna\.library\.path=|java\.library\.path=|LD_LIBRARY_PATH=|DYLD_LIBRARY_PATH=')
+          proof, junit = [], []
+          # JUnit XML is the authoritative record: testsuite attributes carry the
+          # pass/fail tally and <system-out> carries what the test printed.
+          for xml_path in sorted(glob.glob('app/build/test-results/**/*RealRustBridgeProofTest*.xml', recursive=True)):
+              try:
+                  suite = ET.parse(xml_path).getroot()
+                  junit.append('junit %s: tests=%s failures=%s errors=%s skipped=%s' % (suite.get('name') or xml_path, suite.get('tests'), suite.get('failures'), suite.get('errors'), suite.get('skipped')))
+                  for out in suite.iter('system-out'):
+                      proof += [ln.strip() for ln in (out.text or '').splitlines() if keep.search(ln)]
+              except Exception as exc:
+                  junit.append('junit %s: UNPARSED (%s)' % (xml_path, exc))
+          if not proof:
+              # Fall back to the Gradle console log (testLogging.showStandardStreams).
+              try:
+                  proof = [ln.strip() for ln in open(path, 'r', errors='replace').read().splitlines() if keep.search(ln)]
+              except OSError as exc:
+                  proof = ['gradle log UNREADABLE %s: %s' % (path, exc)]
+          proof = proof[-6:]
+          if not any(ln.startswith('RealRustBridgeProof:') for ln in proof):
+              proof.insert(0, 'WARNING: no RealRustBridgeProof line captured - NOT EVIDENCE')
+          if not junit:
+              junit.append('WARNING: no RealRustBridgeProofTest JUnit XML found - NOT EVIDENCE')
+          enc = '\n'.join(proof + junit)[:900].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::notice title={t}::{enc}')
+          PY
+
+      - name: Release assembly (proves R8 keep rules)
+        run: |
+          set -euo pipefail
+          if ! ./gradlew assembleRelease --stacktrace --no-daemon >/tmp/android-gradle-release.txt 2>&1; then cat /tmp/android-gradle-release.txt; tail -n 300 /tmp/android-gradle-release.txt; python3 - /tmp/android-gradle-release.txt 'Android gradle release' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+
+  ios-shell:
+    name: iOS shell
+    runs-on: macos-15
+    # ADR-0006 requires Xcode 16+ (objectVersion 77, Swift 6.0). macos-14 default
+    # is Xcode 15.4 / Swift 5.10 / SDK 17.5 (observed in run 34962440056), which
+    # does not match the committed project. macos-15 default is Xcode 16.0 per
+    # https://github.com/actions/runner-images/issues/11486, compatible with Swift 6.
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Show Xcode version
+        run: |
+          echo "Available Xcode installations:"
+          ls -1 /Applications/Xcode*.app 2>&1 || true
+          echo "Selecting compatible Xcode (ADR-0006: objectVersion 77 = Xcode 16+, modeled on Xcode 16/26): prefer Xcode 26.x if available, fallback to 16.x"
+          # macos-15 runner has Xcode 26 installations available per observed env; previous job reported Xcode 16.2 active.
+          # We explicitly select the newest compatible version to ensure xcodebuild verification uses the recorded toolchain decision.
+          if [ -d "/Applications/Xcode_26.0.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_26.0.app
+          elif [ -d "/Applications/Xcode_26.1.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_26.1.app
+          elif [ -d "/Applications/Xcode_26.0.1.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_26.0.1.app
+          elif [ -d "/Applications/Xcode_16.4.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.4.app
+          elif [ -d "/Applications/Xcode_16.2.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.2.app
+          elif [ -d "/Applications/Xcode_16.1.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.1.app
+          elif [ -d "/Applications/Xcode_16.0.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.0.app
+          else
+            echo "No known Xcode version found, using system default"
+          fi
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version || true
+          swift --version
+
+      - name: Show Rust toolchain (for UniFFI bridge)
+        working-directory: core
+        run: |
+          rustup show
+          cargo --version
+          rustc --version
+
+      - name: Install Rust iOS targets
+        working-directory: core
+        run: |
+          set -euo pipefail
+          # macos-14 is aarch64; x86_64-apple-ios-sim not supported on 1.98.1-aarch64-apple-darwin toolchain (run 34962440056)
+          if ! rustup target add aarch64-apple-ios aarch64-apple-ios-sim >/tmp/ios-targets.txt 2>&1; then cat /tmp/ios-targets.txt; python3 - /tmp/ios-targets.txt 'iOS rustup target add' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          cat /tmp/ios-targets.txt
+
+      - name: Build Rust core for iOS (staticlib)
+        working-directory: core
+        run: |
+          set -euo pipefail
+          if ! cargo build --release --locked --target aarch64-apple-ios >/tmp/ios-build-aarch64.txt 2>&1; then cat /tmp/ios-build-aarch64.txt; python3 - /tmp/ios-build-aarch64.txt 'iOS aarch64 build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          if ! cargo build --release --locked --target aarch64-apple-ios-sim >/tmp/ios-build-sim-arm.txt 2>&1; then cat /tmp/ios-build-sim-arm.txt; python3 - /tmp/ios-build-sim-arm.txt 'iOS sim arm64 build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          ls -lh target/*/release/libgreenfield5_core.a
+
+      - name: Generate Swift bindings via UniFFI
+        working-directory: core
+        run: |
+          set -euo pipefail
+          # Clean up old placeholder that caused ambiguous type errors (greenfield5.swift vs greenfield5_core.swift)
+          # Real UniFFI generates greenfield5_core.swift + FFI header/modulemap; placeholder must match that name.
+          rm -f ../apps/ios/Greenfield5/Bridge/Generated/greenfield5.swift
+          rm -rf ../apps/ios/Greenfield5/Bridge/Generated/headers
+          rm -rf ../apps/ios/Greenfield5/Bridge/Generated/Greenfield5Core.xcframework
+          rm -rf target/xcframework-headers
+          if ! cargo build --release --locked >/tmp/ios-host-build.txt 2>&1; then cat /tmp/ios-host-build.txt; python3 - /tmp/ios-host-build.txt 'iOS host cdylib build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          if ! cargo run --locked --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.dylib --language swift --out-dir ../apps/ios/Greenfield5/Bridge/Generated/ >/tmp/ios-bindgen.txt 2>&1; then cat /tmp/ios-bindgen.txt; python3 - /tmp/ios-bindgen.txt 'iOS Swift bindgen' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          # Ensure only one Swift file defines the API — delete old greenfield5.swift if bindgen created greenfield5_core.swift and left old file
+          if [ -f "../apps/ios/Greenfield5/Bridge/Generated/greenfield5_core.swift" ] && [ -f "../apps/ios/Greenfield5/Bridge/Generated/greenfield5.swift" ]; then
+            echo "Both greenfield5.swift and greenfield5_core.swift exist after generation — removing old greenfield5.swift to avoid ambiguous types"
+            rm -f ../apps/ios/Greenfield5/Bridge/Generated/greenfield5.swift
+          fi
+          find ../apps/ios/Greenfield5/Bridge/Generated -type f -print 2>&1 || true
+
+      - name: Generate XCFramework
+        working-directory: apps/ios
+        run: |
+          set -euo pipefail
+          chmod +x scripts/generate-xcframework.sh || true
+          if ! ./scripts/generate-xcframework.sh >/tmp/ios-xcf.txt 2>&1; then cat /tmp/ios-xcf.txt; python3 - /tmp/ios-xcf.txt 'iOS XCFramework' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          echo "XCFramework generated, listing:"
+          find Greenfield5/Bridge/Generated -type f -print 2>&1 || true
+          # Same observability rationale as the Android job: artifact downloads
+          # and raw logs are unreachable from the sandbox, so without a
+          # success-path notice nobody can quote what iOS actually generated at
+          # this head. Sizes matter here — the repository commits 8-byte
+          # `!<arch>` placeholder archives, so a real XCFramework is only
+          # distinguishable from a leftover placeholder by byte count, and this
+          # notice says so explicitly instead of letting a placeholder pass as
+          # a build product. Bounded, guarded, cannot affect the gate result.
+          python3 - 'iOS generated Swift + XCFramework' <<'PY' || true
+          import os, sys
+          title, root = sys.argv[1], 'Greenfield5/Bridge/Generated'
+          files, warned = [], []
+          for dirpath, _dirs, names in os.walk(root):
+              for name in sorted(names):
+                  full = os.path.join(dirpath, name)
+                  try:
+                      size = os.path.getsize(full)
+                  except OSError as exc:
+                      warned.append('UNSTATABLE %s: %s' % (full, exc))
+                      continue
+                  files.append((os.path.relpath(full, root), size))
+                  if name.endswith(('.a', '.dylib', '.framework')) or '.xcframework' in full:
+                      # An 8-byte `!<arch>` archive is a committed placeholder,
+                      # not a compiled slice.
+                      if size <= 64:
+                          warned.append('PLACEHOLDER-SIZED %s = %dB (<=64B)' % (os.path.relpath(full, root), size))
+          files.sort()
+          body = ['generated files: %d under %s' % (len(files), root)]
+          body += ['%s=%dB' % (rel, size) for rel, size in files[:18]]
+          if len(files) > 18:
+              body.append('... %d more' % (len(files) - 18))
+          if not files:
+              warned.append('NO GENERATED FILES FOUND - NOT EVIDENCE')
+          body += warned[:4]
+          enc = '\n'.join(body)[:900].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::notice title={t}::{enc}')
+          PY
+
+      - name: Build iOS app (simulator)
+        run: |
+          set -euo pipefail
+          echo "Available destinations for Greenfield5 scheme:"
+          xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -showdestinations || true
+          echo "Simctl runtimes:"
+          xcrun simctl list runtimes 2>&1 | head -n 100 || true
+          echo "Simctl devices available:"
+          xcrun simctl list devices available 2>&1 | head -n 200 || true
+          echo "Xcode version:"
+          xcodebuild -version
+          echo "Project file references:"
+          grep -n "Greenfield5Core.xcframework" Greenfield5.xcodeproj/project.pbxproj || true
+          echo "Generated files listing:"
+          find Greenfield5/Bridge/Generated -type f -ls 2>&1 || true
+          echo "XCFramework Info.plist:"
+          cat Greenfield5/Bridge/Generated/Greenfield5Core.xcframework/Info.plist 2>&1 || true
+          echo "XCFramework headers listing:"
+          find Greenfield5/Bridge/Generated/Greenfield5Core.xcframework -type f -name "*.h" -o -name "*.modulemap" | xargs ls -lh 2>&1 || true
+          for f in Greenfield5/Bridge/Generated/Greenfield5Core.xcframework/*/Headers/module.modulemap; do
+            echo "=== $f ==="
+            cat "$f" 2>&1 || true
+          done
+          echo "Swift bindings head (first 300 lines):"
+          head -n 300 Greenfield5/Bridge/Generated/greenfield5_core.swift 2>&1 || true
+          # Xcode 26 on macos-15 has iPad (10th gen) with OS 18.5/18.6/26.0.1/26.1/26.2 (run 34973769653)
+          # iPhone 16 not available in that image; use iPad as primary, then generic, then Any device
+          set +e
+          xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (10th generation),OS=26.0.1' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "iPad 10th gen 26.0.1 failed (rc=$rc), trying iPad 10th gen 18.6..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (10th generation),OS=18.6' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "iPad 10th gen 18.6 failed (rc=$rc), trying iPad 10th gen without OS..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (10th generation)' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "iPad 10th gen without OS failed (rc=$rc), trying iPad A16..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (A16)' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "iPad A16 failed (rc=$rc), trying generic/platform=iOS Simulator..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'generic/platform=iOS Simulator' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "generic/platform failed (rc=$rc), trying platform=iOS Simulator,OS=latest..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,OS=latest' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "platform=iOS Simulator OS=latest failed (rc=$rc), trying platform=iOS Simulator..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "platform=iOS Simulator failed (rc=$rc), trying iPhone 16..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPhone 16' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          set -e
+          cat /tmp/ios-xcode-build.txt
+          echo "=== Build log tail 1000 ==="
+          tail -n 1000 /tmp/ios-xcode-build.txt || true
+          echo "=== Grep for error: (last 500) ==="
+          grep -i -n "error:" /tmp/ios-xcode-build.txt | tail -n 500 || true
+          echo "=== Grep for RustBuffer/ForeignBytes/canImport/checksum ==="
+          grep -n "RustBuffer\|ForeignBytes\|RustCallStatus\|canImport\|ffi_greenfield5\|checksum\|Greenfield5Core\|ProcessXCFramework\|undefined symbol\|linker command failed" /tmp/ios-xcode-build.txt | tail -n 500 || true
+          echo "=== Full error context ==="
+          grep -n -A3 -B3 "error:" /tmp/ios-xcode-build.txt | tail -n 1000 || true
+          # Prepare error summary for annotation
+          grep -i -n "error:" /tmp/ios-xcode-build.txt | tail -n 100 > /tmp/ios-errors-summary.txt 2>&1 || echo "no errors found" > /tmp/ios-errors-summary.txt
+          grep -n "RustBuffer\|ForeignBytes\|RustCallStatus\|canImport\|ffi_greenfield5\|checksum\|undefined symbol" /tmp/ios-xcode-build.txt | tail -n 100 >> /tmp/ios-errors-summary.txt 2>&1 || true
+          echo "=== Error summary ==="
+          cat /tmp/ios-errors-summary.txt
+          if [ $rc -ne 0 ]; then
+            echo "=== Annotation from error summary ==="
+            python3 - /tmp/ios-errors-summary.txt 'iOS xcodebuild errors' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            echo "=== Annotation from full build tail ==="
+            python3 - /tmp/ios-xcode-build.txt 'iOS xcodebuild full tail' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            exit 1
+          fi
+          tail -n 100 /tmp/ios-xcode-build.txt || true
+
+      - name: Upload iOS build log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-build-log
+          path: /tmp/ios-xcode-build.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run iOS tests
+        timeout-minutes: 16
+        run: |
+          set -euo pipefail
+          echo "Running iOS tests: primary iPad 10th gen 26.0.1, fallback iPad 10th gen 18.6."
+          echo "Each xcodebuild attempt is capped at 7 minutes; the whole step has a 16-minute outer ceiling."
+          run_with_timeout() {
+            local seconds="$1"
+            local log="$2"
+            shift 2
+            python3 - "$seconds" "$log" "$@" <<'PY'
+          import os, signal, subprocess, sys, time
+          seconds = int(sys.argv[1])
+          log_path = sys.argv[2]
+          cmd = sys.argv[3:]
+          with open(log_path, "wb") as log:
+              proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+              try:
+                  rc = proc.wait(timeout=seconds)
+              except subprocess.TimeoutExpired:
+                  log.write(("\nTIMEOUT: command exceeded %ss: %s\n" % (seconds, " ".join(cmd))).encode())
+                  log.flush()
+                  try:
+                      os.killpg(proc.pid, signal.SIGTERM)
+                  except ProcessLookupError:
+                      pass
+                  try:
+                      proc.wait(timeout=10)
+                  except subprocess.TimeoutExpired:
+                      try:
+                          os.killpg(proc.pid, signal.SIGKILL)
+                      except ProcessLookupError:
+                          pass
+                      proc.wait()
+                  rc = 124
+          sys.exit(rc)
+          PY
+          }
+
+          set +e
+          run_with_timeout 420 /tmp/ios-xcode-test.txt \
+            xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 \
+            -destination-timeout 60 \
+            -destination 'platform=iOS Simulator,name=iPad (10th generation),OS=26.0.1' \
+            -configuration Debug CODE_SIGNING_ALLOWED=NO
+          rc=$?
+
+          if [ $rc -eq 124 ]; then
+            echo "iPad 10th gen 26.0.1 test timed out after 7 minutes; resetting simulators before fallback."
+          elif [ $rc -ne 0 ]; then
+            echo "iPad 10th gen 26.0.1 test failed (rc=$rc); resetting simulators before fallback."
+          fi
+
+          if [ $rc -ne 0 ]; then
+            xcrun simctl shutdown all 2>/dev/null || true
+            sleep 3
+            run_with_timeout 420 /tmp/ios-xcode-test.txt \
+              xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 \
+              -destination-timeout 60 \
+              -destination 'platform=iOS Simulator,name=iPad (10th generation),OS=18.6' \
+              -configuration Debug CODE_SIGNING_ALLOWED=NO
+            rc=$?
+          fi
+          set -e
+          cat /tmp/ios-xcode-test.txt
+          echo "=== Test log tail 1000 ==="
+          tail -n 1000 /tmp/ios-xcode-test.txt || true
+          echo "=== Grep errors ==="
+          grep -i -n "error:" /tmp/ios-xcode-test.txt | tail -n 500 || true
+          if [ $rc -ne 0 ]; then
+            echo "=== Simulator diagnostics after test failure ==="
+            xcrun simctl list runtimes 2>&1 | tail -n 100 || true
+            xcrun simctl list devices available 2>&1 | tail -n 200 || true
+            ps aux | grep -E '[x]codebuild|[S]imulator|[C]oreSimulator' | tail -n 100 || true
+            tail -n 500 /tmp/ios-xcode-test.txt || true
+            python3 - /tmp/ios-xcode-test.txt 'iOS xcode test' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            exit 1
+          fi
+          tail -n 200 /tmp/ios-xcode-test.txt || true
+          # Same observability rationale as the other two notices: the uploaded
+          # ios-test-log artifact cannot be downloaded from the sandbox, so a
+          # green iOS job otherwise proves only "xcodebuild exited 0". This
+          # publishes the markers that distinguish a real test run from a
+          # vacuous one — TEST SUCCEEDED, the destination actually used, the
+          # executed-test count, and each BridgeTests case — and it says so
+          # loudly when the count is missing. Bounded, guarded, cannot change
+          # the gate result.
+          python3 - /tmp/ios-xcode-test.txt 'iOS bridge tests PASSED' <<'PY' || true
+          import re, sys
+          path, title = sys.argv[1], sys.argv[2]
+          keep = re.compile(r'\*\* TEST SUCCEEDED \*\*|\*\* TEST FAILED \*\*|Test Suite .* (passed|failed)|Executed \d+ tests?|Test Case .* (passed|failed)|Testing started on')
+          try:
+              lines = open(path, 'r', errors='replace').read().splitlines()
+          except OSError as exc:
+              lines = []
+              print('::notice title=%s::iOS test log UNREADABLE %s: %s - NOT EVIDENCE' % (title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C'), path, exc))
+              sys.exit(0)
+          hits = [ln.strip() for ln in lines if keep.search(ln)]
+          # A green xcodebuild with zero executed tests is a false proof, so the
+          # absence of a count is reported rather than glossed over.
+          warns = []
+          if not any(re.search(r'Executed \d+ tests?', ln) for ln in hits):
+              warns.append('WARNING: no "Executed N tests" count found - NOT EVIDENCE')
+          if not any('** TEST SUCCEEDED **' in ln for ln in hits):
+              warns.append('WARNING: no "** TEST SUCCEEDED **" marker found - NOT EVIDENCE')
+          cases = [ln for ln in hits if ln.startswith('Test Case')][-8:]
+          tallies = [ln for ln in hits if re.search(r'Executed \d+ tests?|Test Suite .* (passed|failed)|Testing started on|\*\* TEST', ln)][-8:]
+          enc = '\n'.join(warns + tallies + cases)[:900].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::notice title={t}::{enc}')
+          PY
+
+      - name: Upload iOS test log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-test-log
+          path: /tmp/ios-xcode-test.txt
+          if-no-files-found: warn
+          retention-days: 7
