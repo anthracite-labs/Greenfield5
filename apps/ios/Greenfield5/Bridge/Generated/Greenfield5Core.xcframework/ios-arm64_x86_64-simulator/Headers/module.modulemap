@@ -1,0 +1,4 @@
+module greenfield5_coreFFI {
+    header "greenfield5_coreFFI.h"
+    export *
+}

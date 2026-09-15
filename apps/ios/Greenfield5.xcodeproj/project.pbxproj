@@ -6,6 +6,11 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		6F0000000000000000000020 /* Greenfield5Core.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6F0000000000000000000021 /* Greenfield5Core.xcframework */; };
+		6F0000000000000000000022 /* Greenfield5Core.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 6F0000000000000000000021 /* Greenfield5Core.xcframework */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		6F000000000000000000001A /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -19,6 +24,7 @@
 /* Begin PBXFileReference section */
 		6F0000000000000000000004 /* Greenfield5.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Greenfield5.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		6F0000000000000000000005 /* Greenfield5Tests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = Greenfield5Tests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6F0000000000000000000021 /* Greenfield5Core.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = Greenfield5/Bridge/Generated/Greenfield5Core.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -39,6 +45,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6F0000000000000000000020 /* Greenfield5Core.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -46,6 +53,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				6F0000000000000000000022 /* Greenfield5Core.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
