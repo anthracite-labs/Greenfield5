@@ -24,6 +24,10 @@ object Contract {
             check(viewer.sendCommand(1u) == 2.toUByte())
             check(viewer.sendCommand(4u) == 3.toUByte())
         }
+        try { GreenfieldSession.fromCodes(255u, 0u); error("accepted invalid role") }
+        catch (e: BridgeError.UnknownRoleCode) { check(e.code == 255.toUByte()) }
+        try { GreenfieldSession.fromCodes(0u, 255u); error("accepted invalid mode") }
+        catch (e: BridgeError.UnknownModeCode) { check(e.code == 255.toUByte()) }
         val padded = PaddingProbe(0x1234u, 0x55667788u)
         check(paddingRoundTrip(padded) == padded)
         check(paddingList(padded) == listOf(padded, padded))

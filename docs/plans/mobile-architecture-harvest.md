@@ -158,3 +158,12 @@ legacy android.test APIs. Apple pack places Swift in generated/apple/Sources
 under ffi-only layout, not the requested loose Swift output directory; fix
 the integration's asserted source location. These are candidate wiring fixes,
 not upstream defects. Add source hashes/API declarations to annotations.
+
+Run 35030494991 at 9732a04: Apple native package and stable source generated,
+then existing Xcode project (Swift 6, iOS 16) failed compiling generated async
+runtime: captures of `cancel` and `free` function values in @Sendable closure
+are non-Sendable (generated Swift lines 702/703). Do not patch generated output
+or weaken Swift settings. Re-run unchanged to confirm before precise DEFER.
+Android compiled source far enough to reject fixture Compose plugin without
+runtime; add existing pinned BOM + Compose runtime, not a BoltFFI workaround.
+Generated Kotlin confirms fromCodes factory, so add native invalid-code tests.

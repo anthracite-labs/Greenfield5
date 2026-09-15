@@ -31,6 +31,8 @@ android {
     kotlin { compilerOptions { jvmTarget = JvmTarget.fromTarget("17") } }
 }
 dependencies {
+    implementation(platform(libs.androidx.compose.bom))
+    implementation("androidx.compose.runtime:runtime")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
