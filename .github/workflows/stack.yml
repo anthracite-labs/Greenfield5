@@ -163,13 +163,32 @@ jobs:
         working-directory: core
         env:
           ANDROID_NDK_HOME: /usr/local/lib/android/sdk/ndk/28.0.12916984
+          ANDROID_NDK_ROOT: /usr/local/lib/android/sdk/ndk/28.0.12916984
+          NDK_HOME: /usr/local/lib/android/sdk/ndk/28.0.12916984
         run: |
           set -euo pipefail
+          echo \"NDK env: ANDROID_NDK_HOME=$ANDROID_NDK_HOME ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT\"
           rustup target add aarch64-linux-android x86_64-linux-android
-          if ! cargo ndk -t arm64-v8a -t x86_64 --platform 29 -o ../apps/android/app/src/main/jniLibs build --release >/tmp/android-ndk.txt 2>&1; then cat /tmp/android-ndk.txt; python3 - /tmp/android-ndk.txt 'Android cargo ndk build' <<'PY'
+          if ! cargo ndk -t arm64-v8a -t x86_64 --platform 29 -o ../apps/android/app/src/main/jniLibs build --release >/tmp/android-ndk.txt 2>&1; then
+            echo \"---- android-ndk.txt size $(wc -c </tmp/android-ndk.txt) ----\"
+            tail -n 200 /tmp/android-ndk.txt || true
+            python3 - /tmp/android-ndk.txt 'Android cargo ndk tail200' <<'PY'
+          import subprocess, pathlib, sys
+          path,title=sys.argv[1],sys.argv[2]
+          try:
+              out=subprocess.check_output(['tail','-n','200',path], text=True, errors='replace')
+          except Exception as e:
+              out=f'tail failed: {e}\n'+pathlib.Path(path).read_text(errors='replace')[-4000:]
+          data=out[-4000:]
+          enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A')
+          t=title.replace('%','%25').replace(':','%3A').replace(',','%2C')
+          print(f'::error title={t}::{enc}')
+          PY
+            python3 - /tmp/android-ndk.txt 'Android cargo ndk build' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
-          exit 1; fi
+            exit 1
+          fi
           ls -R ../apps/android/app/src/main/jniLibs
 
       - name: Generate Kotlin bindings via UniFFI
@@ -208,7 +227,11 @@ jobs:
 
   ios-shell:
     name: iOS shell
-    runs-on: macos-14
+    runs-on: macos-15
+    # ADR-0006 requires Xcode 16+ (objectVersion 77, Swift 6.0). macos-14 default
+    # is Xcode 15.4 / Swift 5.10 / SDK 17.5 (observed in run 34962440056), which
+    # does not match the committed project. macos-15 default is Xcode 16.0 per
+    # https://github.com/actions/runner-images/issues/11486, compatible with Swift 6.
     defaults:
       run:
         working-directory: apps/ios
@@ -218,6 +241,8 @@ jobs:
 
       - name: Show Xcode version
         run: |
+          ls /Applications/Xcode*.app || true
+          sudo xcode-select -s /Applications/Xcode_16.2.app || sudo xcode-select -s /Applications/Xcode_16.1.app || sudo xcode-select -s /Applications/Xcode_16.0.app || true
           xcodebuild -version
           xcrun --sdk iphoneos --show-sdk-version || true
           swift --version
@@ -233,7 +258,8 @@ jobs:
         working-directory: core
         run: |
           set -euo pipefail
-          if ! rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios-sim >/tmp/ios-targets.txt 2>&1; then cat /tmp/ios-targets.txt; python3 - /tmp/ios-targets.txt 'iOS rustup target add' <<'PY'
+          # macos-14 is aarch64; x86_64-apple-ios-sim not supported on 1.98.1-aarch64-apple-darwin toolchain (run 34962440056)
+          if ! rustup target add aarch64-apple-ios aarch64-apple-ios-sim >/tmp/ios-targets.txt 2>&1; then cat /tmp/ios-targets.txt; python3 - /tmp/ios-targets.txt 'iOS rustup target add' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
           exit 1; fi
@@ -248,10 +274,6 @@ jobs:
           PY
           exit 1; fi
           if ! cargo build --release --target aarch64-apple-ios-sim >/tmp/ios-build-sim-arm.txt 2>&1; then cat /tmp/ios-build-sim-arm.txt; python3 - /tmp/ios-build-sim-arm.txt 'iOS sim arm64 build' <<'PY'
-          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
-          PY
-          exit 1; fi
-          if ! cargo build --release --target x86_64-apple-ios-sim >/tmp/ios-build-sim-x64.txt 2>&1; then cat /tmp/ios-build-sim-x64.txt; python3 - /tmp/ios-build-sim-x64.txt 'iOS sim x86_64 build' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
           exit 1; fi

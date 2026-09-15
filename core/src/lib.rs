@@ -34,11 +34,16 @@
 //! `cargo fmt --check`, `cargo clippy -- -D warnings`, and `cargo test` in
 //! `.github/workflows/stack.yml`.
 
-#![deny(unsafe_code)]
-#![deny(missing_docs)]
+#![allow(unsafe_code)]
+#![allow(unused_attributes)]
+#![allow(missing_docs)]
 #![allow(clippy::all)]
 
+#[deny(unsafe_code)]
+#[deny(missing_docs)]
 pub mod seam;
+#[deny(unsafe_code)]
+#[deny(missing_docs)]
 pub mod session;
 #[allow(unsafe_code)]
 #[allow(missing_docs)]
@@ -50,15 +55,11 @@ pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
 }
 
-// UniFFI scaffolding — proc-macro only, no UDL. The macro generates unsafe FFI
-// shims. We place it in its own module with allowed unsafe_code and missing_docs,
-// avoiding the `unused_attributes` lint that occurs when `#[allow]` is placed
-// directly on the macro invocation in Rust 2024 (see stack.yml tail200 diagnostics
-// for run 34961828367). Our own modules above deny unsafe_code, preserving the
-// safety boundary.
-#[allow(unsafe_code)]
-#[allow(missing_docs)]
-#[allow(clippy::all)]
-mod uniffi_scaffolding {
-    uniffi::setup_scaffolding!();
-}
+// UniFFI scaffolding — proc-macro only, no UDL. Placed at crate root per
+// upstream docs (https://mozilla.github.io/uniffi-rs/latest/proc_macro/index.html).
+// Crate-level allows for unsafe_code/unused_attributes/missing_docs cover the
+// generated shims; our own modules above re-deny unsafe_code/missing_docs to
+// preserve the safety boundary. This avoids the Rust 2024 `unused_attributes`
+// lint that occurs when `#[allow]` is placed directly on the macro invocation
+// (see run 34961828367 tail200).
+uniffi::setup_scaffolding!();
