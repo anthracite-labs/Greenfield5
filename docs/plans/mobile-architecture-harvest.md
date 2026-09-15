@@ -147,3 +147,14 @@ Run 35029393019 Android setup captured `Failed to find package
 and lets the unchanged compileSdk 37 Gradle configuration resolve its SDK; no
 SDK downgrade. If NDK provision fails, capture available NDK/platform package
 listing before exit. This distinguishes environment availability from FFI bugs.
+
+Run 35029785166: both platforms installed CLI and packaged native artifacts;
+source comparison PASS (Android 2 files, Apple 6). Rust 33+6 PASS including
+future cancellation/drop. SDK package preinstallation failure was contained by
+control-equivalent provisioning; not a current execution blocker. Android host
+compile did not see generated package/Contract: configure AGP's Kotlin source
+set explicitly and use pinned AndroidX instrumentation rather than removed
+legacy android.test APIs. Apple pack places Swift in generated/apple/Sources
+under ffi-only layout, not the requested loose Swift output directory; fix
+the integration's asserted source location. These are candidate wiring fixes,
+not upstream defects. Add source hashes/API declarations to annotations.

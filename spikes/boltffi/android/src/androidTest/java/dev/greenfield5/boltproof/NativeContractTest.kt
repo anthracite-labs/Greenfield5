@@ -1,6 +1,10 @@
 package dev.greenfield5.boltproof
 
-@Suppress("DEPRECATION")
-class NativeContractTest : android.test.AndroidTestCase() {
-    fun testRealRustContract() { Contract.run() }
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class NativeContractTest {
+    @Test fun testRealRustContract() { Contract.run() }
 }

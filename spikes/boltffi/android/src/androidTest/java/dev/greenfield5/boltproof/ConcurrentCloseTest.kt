@@ -1,5 +1,9 @@
 package dev.greenfield5.boltproof
 
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Test
+import org.junit.runner.RunWith
+
 import dev.greenfield5.bolt.AsyncProbe
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicInteger
@@ -7,9 +11,9 @@ import java.util.concurrent.atomic.AtomicReference
 
 // Run in a separate instrumentation process after contract tests. A crash is
 // evidence, not permission to retry into a pass. Passing cannot disprove #664.
-@Suppress("DEPRECATION")
-class ConcurrentCloseTest : android.test.AndroidTestCase() {
-    fun testConcurrentClose() {
+@RunWith(AndroidJUnit4::class)
+class ConcurrentCloseTest {
+    @Test fun testConcurrentClose() {
         val rejected = AtomicInteger()
         val unexpected = AtomicReference<Throwable?>()
         repeat(500) {

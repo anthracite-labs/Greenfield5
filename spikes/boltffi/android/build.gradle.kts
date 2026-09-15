@@ -12,7 +12,7 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "0.1.0"
-        testInstrumentationRunner = "android.test.InstrumentationTestRunner"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildTypes {
         getByName("release") {
@@ -21,7 +21,7 @@ android {
         }
     }
     sourceSets.getByName("main") {
-        java.srcDirs("../generated/kotlin", "../host")
+        kotlin.srcDirs("../generated", "../host")
         jniLibs.srcDirs("../generated/jniLibs")
     }
     compileOptions {
@@ -30,4 +30,8 @@ android {
     }
     kotlin { compilerOptions { jvmTarget = JvmTarget.fromTarget("17") } }
 }
-dependencies { implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2") }
+dependencies {
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+}
