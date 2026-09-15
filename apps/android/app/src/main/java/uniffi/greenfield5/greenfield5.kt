@@ -6,6 +6,12 @@
 // Source of truth: core/src/uniffi_api.rs (UniFFI 0.32.1)
 // This stub mirrors that API in pure Kotlin for local builds; the real
 // generated file uses JNA to call libgreenfield5_core.so.
+//
+// Error naming must mirror the real generator, not the Rust source: UniFFI's
+// Kotlin oracle rewrites an error enum whose Rust name ends in `Error` to
+// `*Exception` (convert_error_suffix), so Rust `BridgeError` is Kotlin
+// `BridgeException`. Keeping the stub's name identical is what lets the app
+// compile against either this fallback or the CI-generated bindings.
 
 @file:Suppress("all")
 package uniffi.greenfield5
@@ -43,14 +49,14 @@ enum class SessionCommand {
     END
 }
 
-sealed class BridgeError : Exception() {
-    data class UnknownRoleCode(val code: UByte) : BridgeError()
-    data class UnknownModeCode(val code: UByte) : BridgeError()
-    data class UnknownCommandCode(val code: UByte) : BridgeError()
-    data class RoleMismatch(val expected: Role) : BridgeError()
-    data class InvalidTransition(val state: SessionState, val command: SessionCommand) : BridgeError()
-    object ViewerAlreadyConnected : BridgeError()
-    object SessionEnded : BridgeError()
+sealed class BridgeException : Exception() {
+    data class UnknownRoleCode(val code: UByte) : BridgeException()
+    data class UnknownModeCode(val code: UByte) : BridgeException()
+    data class UnknownCommandCode(val code: UByte) : BridgeException()
+    data class RoleMismatch(val expected: Role) : BridgeException()
+    data class InvalidTransition(val state: SessionState, val command: SessionCommand) : BridgeException()
+    object ViewerAlreadyConnected : BridgeException()
+    object SessionEnded : BridgeException()
 }
 
 // Pure-Kotlin implementation of the session state machine, mirroring
@@ -74,13 +80,13 @@ class GreenfieldSession(
             val r = when (roleCode.toInt()) {
                 0 -> Role.SENDER
                 1 -> Role.VIEWER
-                else -> throw BridgeError.UnknownRoleCode(roleCode)
+                else -> throw BridgeException.UnknownRoleCode(roleCode)
             }
             val m = when (modeCode.toInt()) {
                 0 -> ConnectionMode.LOCAL
                 1 -> ConnectionMode.DIRECT
                 2 -> ConnectionMode.INTERNET
-                else -> throw BridgeError.UnknownModeCode(modeCode)
+                else -> throw BridgeException.UnknownModeCode(modeCode)
             }
             return GreenfieldSession(r, m)
         }
@@ -111,47 +117,47 @@ class GreenfieldSession(
         SessionState.ENDED -> 5u
     }
 
-    @Throws(BridgeError::class)
+    @Throws(BridgeException::class)
     fun apply(command: SessionCommand): SessionState {
-        if (state == SessionState.ENDED) throw BridgeError.SessionEnded
+        if (state == SessionState.ENDED) throw BridgeException.SessionEnded
 
         val next = when (command) {
             SessionCommand.END -> SessionState.ENDED
             SessionCommand.START_PAIRING -> {
-                if (role != Role.SENDER) throw BridgeError.RoleMismatch(Role.SENDER)
-                if (state != SessionState.IDLE) throw BridgeError.InvalidTransition(state, command)
+                if (role != Role.SENDER) throw BridgeException.RoleMismatch(Role.SENDER)
+                if (state != SessionState.IDLE) throw BridgeException.InvalidTransition(state, command)
                 SessionState.AWAITING_PEER
             }
             SessionCommand.REQUEST_JOIN -> {
-                if (role != Role.VIEWER) throw BridgeError.RoleMismatch(Role.VIEWER)
-                if (state != SessionState.IDLE) throw BridgeError.InvalidTransition(state, command)
+                if (role != Role.VIEWER) throw BridgeException.RoleMismatch(Role.VIEWER)
+                if (state != SessionState.IDLE) throw BridgeException.InvalidTransition(state, command)
                 SessionState.AWAITING_APPROVAL
             }
             SessionCommand.PEER_REQUESTED_JOIN -> {
-                if (role != Role.SENDER) throw BridgeError.RoleMismatch(Role.SENDER)
-                if (viewerConnected) throw BridgeError.ViewerAlreadyConnected
-                if (state != SessionState.AWAITING_PEER) throw BridgeError.InvalidTransition(state, command)
+                if (role != Role.SENDER) throw BridgeException.RoleMismatch(Role.SENDER)
+                if (viewerConnected) throw BridgeException.ViewerAlreadyConnected
+                if (state != SessionState.AWAITING_PEER) throw BridgeException.InvalidTransition(state, command)
                 viewerConnected = true
                 SessionState.AWAITING_APPROVAL
             }
             SessionCommand.APPROVE_VIEWER -> {
-                if (role != Role.SENDER) throw BridgeError.RoleMismatch(Role.SENDER)
-                if (state != SessionState.AWAITING_APPROVAL) throw BridgeError.InvalidTransition(state, command)
+                if (role != Role.SENDER) throw BridgeException.RoleMismatch(Role.SENDER)
+                if (state != SessionState.AWAITING_APPROVAL) throw BridgeException.InvalidTransition(state, command)
                 viewerApproved = true
                 SessionState.ACTIVE
             }
             SessionCommand.APPROVAL_RECEIVED -> {
-                if (role != Role.VIEWER) throw BridgeError.RoleMismatch(Role.VIEWER)
-                if (state != SessionState.AWAITING_APPROVAL) throw BridgeError.InvalidTransition(state, command)
+                if (role != Role.VIEWER) throw BridgeException.RoleMismatch(Role.VIEWER)
+                if (state != SessionState.AWAITING_APPROVAL) throw BridgeException.InvalidTransition(state, command)
                 viewerApproved = true
                 SessionState.ACTIVE
             }
             SessionCommand.CAPTURE_STARTED -> {
-                if (state != SessionState.SHARING_INTERRUPTED) throw BridgeError.InvalidTransition(state, command)
+                if (state != SessionState.SHARING_INTERRUPTED) throw BridgeException.InvalidTransition(state, command)
                 SessionState.ACTIVE
             }
             SessionCommand.CAPTURE_STOPPED -> {
-                if (state != SessionState.ACTIVE) throw BridgeError.InvalidTransition(state, command)
+                if (state != SessionState.ACTIVE) throw BridgeException.InvalidTransition(state, command)
                 SessionState.SHARING_INTERRUPTED
             }
         }
@@ -159,7 +165,7 @@ class GreenfieldSession(
         return next
     }
 
-    @Throws(BridgeError::class)
+    @Throws(BridgeException::class)
     fun sendCommand(commandCode: UByte): UByte {
         val cmd = when (commandCode.toInt()) {
             0 -> SessionCommand.START_PAIRING
@@ -170,7 +176,7 @@ class GreenfieldSession(
             5 -> SessionCommand.CAPTURE_STARTED
             6 -> SessionCommand.CAPTURE_STOPPED
             7 -> SessionCommand.END
-            else -> throw BridgeError.UnknownCommandCode(commandCode)
+            else -> throw BridgeException.UnknownCommandCode(commandCode)
         }
         return when (apply(cmd)) {
             SessionState.IDLE -> 0u

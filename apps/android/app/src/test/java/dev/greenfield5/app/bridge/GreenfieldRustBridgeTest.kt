@@ -68,7 +68,7 @@ class GreenfieldRustBridgeTest {
             session.apply(SessionCommand.PEER_REQUESTED_JOIN)
             fail("second viewer must be rejected")
         } catch (e: Exception) {
-            // Expected BridgeError.ViewerAlreadyConnected
+            // Expected BridgeException.ViewerAlreadyConnected
             assertTrue(e.message?.contains("viewer") == true || e.toString().contains("ViewerAlreadyConnected"))
         }
     }

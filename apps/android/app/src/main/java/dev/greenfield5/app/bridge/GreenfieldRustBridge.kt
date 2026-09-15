@@ -1,5 +1,14 @@
 package dev.greenfield5.app.bridge
 
+// UniFFI's Kotlin generator renames a Rust error enum whose name ends in
+// `Error` to `*Exception` (uniffi_bindgen v0.32.1,
+// KotlinCodeOracle::convert_error_suffix; upstream fixture
+// bindgen-tests/kotlin/tests/errors.kts maps TestError -> TestException).
+// So Rust `BridgeError` is Kotlin `BridgeException`. Importing the generated
+// name is deliberate: CI deletes the committed pure-Kotlin fallback before
+// generation, so this line is what proves the real bindings still export it.
+// Deleting the import (as 9596401 did) also silences that proof.
+import uniffi.greenfield5.BridgeException
 import uniffi.greenfield5.ConnectionMode
 import uniffi.greenfield5.GreenfieldSession
 import uniffi.greenfield5.Role
