@@ -153,28 +153,45 @@ jobs:
         run: |
           set -euo pipefail
           rustup target add aarch64-linux-android x86_64-linux-android
-          cargo ndk -t arm64-v8a -t x86_64 --platform 29 -o ../apps/android/app/src/main/jniLibs build --release
+          if ! cargo ndk -t arm64-v8a -t x86_64 --platform 29 -o ../apps/android/app/src/main/jniLibs build --release >/tmp/android-ndk.txt 2>&1; then cat /tmp/android-ndk.txt; python3 - /tmp/android-ndk.txt 'Android cargo ndk build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
           ls -R ../apps/android/app/src/main/jniLibs
 
       - name: Generate Kotlin bindings via UniFFI
         working-directory: core
         run: |
           set -euo pipefail
-          cargo build --release
-          # Generate Kotlin bindings from cdylib
-          cargo run --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.so --language kotlin --out-dir ../apps/android/app/src/main/java/
+          if ! cargo build --release >/tmp/android-host-build.txt 2>&1; then cat /tmp/android-host-build.txt; python3 - /tmp/android-host-build.txt 'Android host build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          if ! cargo run --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.so --language kotlin --out-dir ../apps/android/app/src/main/java/ >/tmp/android-bindgen.txt 2>&1; then cat /tmp/android-bindgen.txt; python3 - /tmp/android-bindgen.txt 'Android Kotlin bindgen' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
           ls -R ../apps/android/app/src/main/java/uniffi || true
-          # Also generate for verification that files exist
           echo "Generated Kotlin bindings:"
           find ../apps/android/app/src/main/java/uniffi -type f | head -n 20
 
       # The wrapper properties pin Gradle 9.6.1 with its SHA-256 checksum;
       # AGP 9.4.0 / Kotlin 2.4.20 pins live in gradle/libs.versions.toml.
       - name: Unit tests and debug assembly (with Rust bridge)
-        run: ./gradlew testDebugUnitTest assembleDebug --stacktrace --no-daemon
+        run: |
+          set -euo pipefail
+          if ! ./gradlew testDebugUnitTest assembleDebug --stacktrace --no-daemon >/tmp/android-gradle-debug.txt 2>&1; then cat /tmp/android-gradle-debug.txt; tail -n 300 /tmp/android-gradle-debug.txt; python3 - /tmp/android-gradle-debug.txt 'Android gradle debug' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
 
       - name: Release assembly (proves R8 keep rules)
-        run: ./gradlew assembleRelease --stacktrace --no-daemon
+        run: |
+          set -euo pipefail
+          if ! ./gradlew assembleRelease --stacktrace --no-daemon >/tmp/android-gradle-release.txt 2>&1; then cat /tmp/android-gradle-release.txt; tail -n 300 /tmp/android-gradle-release.txt; python3 - /tmp/android-gradle-release.txt 'Android gradle release' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
 
   ios-shell:
     name: iOS shell
@@ -208,18 +225,32 @@ jobs:
         working-directory: core
         run: |
           set -euo pipefail
-          cargo build --release --target aarch64-apple-ios
-          cargo build --release --target aarch64-apple-ios-sim
-          cargo build --release --target x86_64-apple-ios-sim
+          if ! cargo build --release --target aarch64-apple-ios >/tmp/ios-build-aarch64.txt 2>&1; then cat /tmp/ios-build-aarch64.txt; python3 - /tmp/ios-build-aarch64.txt 'iOS aarch64 build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          if ! cargo build --release --target aarch64-apple-ios-sim >/tmp/ios-build-sim-arm.txt 2>&1; then cat /tmp/ios-build-sim-arm.txt; python3 - /tmp/ios-build-sim-arm.txt 'iOS sim arm64 build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          if ! cargo build --release --target x86_64-apple-ios-sim >/tmp/ios-build-sim-x64.txt 2>&1; then cat /tmp/ios-build-sim-x64.txt; python3 - /tmp/ios-build-sim-x64.txt 'iOS sim x86_64 build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
           ls -lh target/*/release/libgreenfield5_core.a
 
       - name: Generate Swift bindings via UniFFI
         working-directory: core
         run: |
           set -euo pipefail
-          # Generate Swift bindings from cdylib (host)
-          cargo build --release
-          cargo run --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.dylib --language swift --out-dir ../apps/ios/Greenfield5/Bridge/Generated/
+          if ! cargo build --release >/tmp/ios-host-build.txt 2>&1; then cat /tmp/ios-host-build.txt; python3 - /tmp/ios-host-build.txt 'iOS host cdylib build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          if ! cargo run --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.dylib --language swift --out-dir ../apps/ios/Greenfield5/Bridge/Generated/ >/tmp/ios-bindgen.txt 2>&1; then cat /tmp/ios-bindgen.txt; python3 - /tmp/ios-bindgen.txt 'iOS Swift bindgen' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
           ls -R ../apps/ios/Greenfield5/Bridge/Generated/
 
       - name: Generate XCFramework
@@ -227,15 +258,26 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x scripts/generate-xcframework.sh || true
-          ./scripts/generate-xcframework.sh || bash scripts/generate-xcframework.sh
+          if ! ./scripts/generate-xcframework.sh >/tmp/ios-xcf.txt 2>&1; then cat /tmp/ios-xcf.txt; python3 - /tmp/ios-xcf.txt 'iOS XCFramework' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
           ls -R Greenfield5/Bridge/Generated/ | head -n 100
 
       - name: Build iOS app (simulator)
         run: |
           set -euo pipefail
-          xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' -configuration Debug build CODE_SIGNING_ALLOWED=NO | tail -n 100
+          if ! xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' -configuration Debug build CODE_SIGNING_ALLOWED=NO >/tmp/ios-xcode-build.txt 2>&1; then cat /tmp/ios-xcode-build.txt; tail -n 200 /tmp/ios-xcode-build.txt; python3 - /tmp/ios-xcode-build.txt 'iOS xcodebuild' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          tail -n 100 /tmp/ios-xcode-build.txt
 
       - name: Run iOS tests
         run: |
           set -euo pipefail
-          xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' -configuration Debug CODE_SIGNING_ALLOWED=NO | tail -n 200
+          if ! xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPhone 16,OS=latest' -configuration Debug CODE_SIGNING_ALLOWED=NO >/tmp/ios-xcode-test.txt 2>&1; then cat /tmp/ios-xcode-test.txt; tail -n 300 /tmp/ios-xcode-test.txt; python3 - /tmp/ios-xcode-test.txt 'iOS xcode test' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          tail -n 200 /tmp/ios-xcode-test.txt

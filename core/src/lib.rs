@@ -40,6 +40,7 @@
 pub mod seam;
 pub mod session;
 #[allow(unsafe_code)]
+#[allow(missing_docs)]
 #[allow(clippy::all)]
 pub mod uniffi_api;
 
