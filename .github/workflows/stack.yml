@@ -30,8 +30,8 @@ permissions:
 
 concurrency:
   group: stack-${{ github.ref }}
-  # Superseded PR heads should cancel stale platform runs; main/manual runs still serialize.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A newer head supersedes stale platform work on the same ref; never let a wedged run block CI.
+  cancel-in-progress: true
 
 jobs:
   rust-core:
