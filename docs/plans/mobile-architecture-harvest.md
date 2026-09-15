@@ -131,3 +131,13 @@ a stale research citation rather than the current control workflow pin. The
 control and fresh upstream commits/v3 API agree on 9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407.
 Smallest fix: use that already-reviewed current pin. Not a BoltFFI defect or
 external execution blocker. Re-run on the next head; no checks relaxed.
+
+Run 35028960389: Rust candidate 33+4 PASS. Apple CLI installed 0.30.1, but
+pack failed for four default targets; no host proof. Hypothesis: targets were
+not installed, and default x86_64-apple-ios is unsupported in this toolchain
+(the control already limits simulator to arm64). Install the same supported
+Apple targets and configure them explicitly; enable CLI verbose diagnostics.
+Android setup action failed again with no readable failure annotation; raw job
+logs redirect to blocked blob storage. Replace the opaque action in candidate
+only with explicit sdkmanager commands and captured errors, retaining exact NDK.
+Control action/jobs remain untouched. Not yet an upstream defect finding.

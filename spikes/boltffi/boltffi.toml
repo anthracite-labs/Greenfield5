@@ -17,7 +17,9 @@ output = "generated/jniLibs"
 
 [targets.apple]
 deployment_target = "16.0"
-include_macos = true
+include_macos = false
+ios_architectures = ["arm64"]
+simulator_architectures = ["arm64"]
 output = "generated/apple"
 [targets.apple.swift]
 module_name = "BoltSpike"

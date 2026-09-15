@@ -801,18 +801,27 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407
+      - name: Explicit Android SDK setup with captured errors
         if: matrix.target == 'android'
-        with:
-          packages: ndk;28.0.12916984
-      - name: Android NDK
-        if: matrix.target == 'android'
-        run: sdkmanager 'ndk;28.0.12916984'
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          "$SDKMANAGER" 'ndk;28.0.12916984' 'platforms;android-37' 'platform-tools' > evidence.log 2>&1
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$ANDROID_HOME/platform-tools" >> "$GITHUB_PATH"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.0.12916984" >> "$GITHUB_ENV"
+          rustup target add aarch64-linux-android x86_64-linux-android >> evidence.log 2>&1
+      - name: Install supported Apple targets
+        if: matrix.target == 'apple'
+        timeout-minutes: 5
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim > evidence.log 2>&1
       - name: Install exact CLI
         timeout-minutes: 12
         run: |
           set -euo pipefail
-          cargo install boltffi_cli --version '=0.30.1' --locked > evidence.log 2>&1
+          cargo install boltffi_cli --version '=0.30.1' --locked >> evidence.log 2>&1
           boltffi --version >> evidence.log
       - name: Generate and pack real artifacts
         timeout-minutes: 12
@@ -820,7 +829,7 @@ jobs:
           BOLT_TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          boltffi pack "$BOLT_TARGET" --release >> evidence.log 2>&1
+          boltffi -v pack "$BOLT_TARGET" --release --deny-skipped >> evidence.log 2>&1
           find generated -type f -print >> evidence.log
       - name: Repeat generation and inspect stable source
         timeout-minutes: 12
@@ -835,7 +844,7 @@ jobs:
           assert hashes, "No generated source"
           pathlib.Path("source-hashes.json").write_text(json.dumps(hashes, indent=2))
           PYTHON
-          boltffi pack "$BOLT_TARGET" --release >> evidence.log 2>&1
+          boltffi -v pack "$BOLT_TARGET" --release --deny-skipped >> evidence.log 2>&1
           python3 - <<'PYTHON'
           import hashlib, json, pathlib
           old = json.loads(pathlib.Path("source-hashes.json").read_text())
