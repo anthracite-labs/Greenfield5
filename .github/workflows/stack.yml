@@ -240,11 +240,45 @@ jobs:
             python3 - /tmp/android-gradle-real-proof.txt 'Android real Rust proof' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
+            # GitHub keeps only the FIRST 4096 characters of an annotation
+            # message and the Gradle distribution banner fills that window, so
+            # the 60000-character payload above never reaches the failure text.
+            # Publish a second, bounded annotation holding only the lines that
+            # carry the cause (the bridge proof's own diagnostics, which
+            # build.gradle.kts now surfaces via testLogging) plus the log tail.
+            python3 - /tmp/android-gradle-real-proof.txt 'Android real Rust proof digest' <<'PY'
+          import re, sys
+          path, title = sys.argv[1], sys.argv[2]
+          keep = re.compile(r'RealRustBridgeProof:|jna\.library\.path=|java\.library\.path=|LD_LIBRARY_PATH=|UnsatisfiedLinkError|ExceptionInInitializerError|NoClassDefFoundError|AssertionError|ComparisonFailure|FAILED|What went wrong')
+          lines = open(path, 'r', errors='replace').read().splitlines()
+          hits = [ln for ln in lines if keep.search(ln)][-30:]
+          data = '\n'.join(hits)[-900:] + '\n---- gradle tail ----\n' + '\n'.join(lines[-8:])[-300:]
+          enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::error title={t}::{enc}')
+          PY
             exit 1
           fi
           echo "Real Rust proof passed, now running all unit tests + assembleDebug"
           if ! ./gradlew testDebugUnitTest assembleDebug --stacktrace --no-daemon -Djna.library.path=${{ github.workspace }}/core/target/release >/tmp/android-gradle-debug.txt 2>&1; then cat /tmp/android-gradle-debug.txt; tail -n 300 /tmp/android-gradle-debug.txt; python3 - /tmp/android-gradle-debug.txt 'Android gradle debug' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            # GitHub keeps only the FIRST 4096 characters of an annotation
+            # message and the Gradle distribution banner fills that window, so
+            # the 60000-character payload above never reaches the failure text.
+            # Publish a second, bounded annotation holding only the lines that
+            # carry the cause (the bridge proof's own diagnostics, which
+            # build.gradle.kts now surfaces via testLogging) plus the log tail.
+            python3 - /tmp/android-gradle-debug.txt 'Android gradle debug digest' <<'PY'
+          import re, sys
+          path, title = sys.argv[1], sys.argv[2]
+          keep = re.compile(r'RealRustBridgeProof:|jna\.library\.path=|java\.library\.path=|LD_LIBRARY_PATH=|UnsatisfiedLinkError|ExceptionInInitializerError|NoClassDefFoundError|AssertionError|ComparisonFailure|FAILED|What went wrong')
+          lines = open(path, 'r', errors='replace').read().splitlines()
+          hits = [ln for ln in lines if keep.search(ln)][-30:]
+          data = '\n'.join(hits)[-900:] + '\n---- gradle tail ----\n' + '\n'.join(lines[-8:])[-300:]
+          enc = data.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
+          print(f'::error title={t}::{enc}')
           PY
           exit 1; fi
           echo "---- Real proof test output ----"

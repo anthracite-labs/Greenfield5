@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -75,11 +76,23 @@ dependencies {
 }
 
 tasks.withType<Test> {
-    // Host Rust cdylib for JVM bridge-proof test: core/target/release/libgreenfield5_core.so
+    // Host Rust cdylib for JVM bridge-proof test: <repo>/core/target/release/libgreenfield5_core.so
     // Provide via JNA library path so System.loadLibrary and JNA can find it in CI.
     // Local dev without Rust toolchain will still work via fallback, but CI proof test will fail if not found.
-    val coreReleaseDir = file("../../core/target/release").absolutePath
-    val hostNativeLib = file("../../core/target/release/${System.mapLibraryName("greenfield5_core")}").absolutePath
+    //
+    // Resolve from rootProject, never by counting ".." from this module. The
+    // Gradle build root is <repo>/apps/android and this module is one level
+    // below it, so the previous "../../core/target/release" resolved to
+    // <repo>/apps/core/target/release — a directory that cannot exist. Both
+    // RealRustBridgeProofTest assertions then failed in CI (Stack run
+    // 34995174223): System.load() had no library to load, and jna.library.path
+    // pointed nowhere, so the generated bindings could not register with JNA
+    // and coreVersion() fell back. The -Djna.library.path the workflow passes
+    // reaches the Gradle JVM only; it is never forwarded to the test worker.
+    val coreReleaseDir = rootProject.projectDir.parentFile.parentFile
+        .resolve("core/target/release")
+        .absolutePath
+    val hostNativeLib = File(coreReleaseDir, System.mapLibraryName("greenfield5_core")).absolutePath
     systemProperty("greenfield5.native.lib.path", hostNativeLib)
     systemProperty("jna.library.path", coreReleaseDir)
     systemProperty("java.library.path", coreReleaseDir)
@@ -88,4 +101,19 @@ tasks.withType<Test> {
     // Ensure CI env is visible to tests
     environment("CI", System.getenv("CI") ?: "")
     environment("GITHUB_ACTIONS", System.getenv("GITHUB_ACTIONS") ?: "")
+
+    // A failing bridge proof has to say WHY in the Gradle console log, because
+    // that log is the only part of CI an agent or reviewer can still read:
+    // raw Actions logs are unreachable from the sandbox and a check-run
+    // annotation is capped at 4096 characters. Gradle's default short format
+    // prints just the exception class and line ("java.lang.AssertionError at
+    // RealRustBridgeProofTest.kt:42"), which hid the load error for several
+    // CI cycles. FULL format prints the assertion message — and the test
+    // already puts loadError and every library path into it — while
+    // showStandardStreams adds the diagnostics the test prints itself.
+    // Neither setting can turn a failing test into a passing one.
+    testLogging {
+        exceptionFormat = TestExceptionFormat.FULL
+        showStandardStreams = true
+    }
 }

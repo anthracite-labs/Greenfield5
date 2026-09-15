@@ -470,3 +470,83 @@ script instead of inlining it; the 2 SC2038 `find | xargs` style notes; the
 fallback's error variants are `data class`/`object` while UniFFI generates
 plain `class` with an overridden `message` (tests only assert on
 `toString()` containing the variant name, which holds for both).
+
+## 2026-09-15 — PR #17 repair 2: the JVM bridge proof was pointed one level short
+
+**Context:** Same session, same branch. While the naming fix was being
+prepared, a concurrent push moved PR #17's head from `066271a` to `9596401`
+("fix(android): remove stale generated error import", 1 deletion). The work
+was re-based onto the new remote head rather than the stale one; GitHub stays
+the source of truth. `9596401` fixed the compile by deleting the unresolved
+import, and its Stack run 34995174223 (verify run 34995174204 SUCCESS) then
+produced the first real evidence of the app compiling against generated
+bindings: the `compileDebugKotlin` warnings name
+`uniffi/greenfield5/greenfield5_core.kt`, so `core/uniffi.toml`
+`package_name = "uniffi.greenfield5"` is honoured and the fallback really was
+deleted. Rust core and iOS shell stayed SUCCESS.
+**Did:** Diagnosed the remaining Android failure from the check-run
+annotation (job 104472101320): `RealRustBridgeProofTest` failed at
+`RealRustBridgeProofTest.kt:42` (`AssertionError`, the "native library must
+be loaded in CI" assert) and `:90` (`ComparisonFailure`, version must be
+exactly `0.1.0`). Root cause, arithmetic not guesswork:
+`apps/android/app/build.gradle.kts` used `file("../../core/target/release")`,
+which Gradle resolves against the `:app` project dir `apps/android/app`, i.e.
+`<repo>/apps/core/target/release` — a directory that cannot exist. So
+`System.load(greenfield5.native.lib.path)` had no library (line 42) and
+`jna.library.path` / `java.library.path` / `LD_LIBRARY_PATH` all pointed
+nowhere, so UniFFI's generated `Native.register(..., "greenfield5_core")`
+could not bind and `coreVersion()` fell back to `0.1.0-fallback` (line 90).
+The workflow's own `ls -lh ../../core/target/release/...` looked right only
+because that step runs from `apps/android`; and the
+`-Djna.library.path=${{ github.workspace }}/core/target/release` on the
+gradle command line reaches the Gradle JVM, never the test worker. Fixed by
+resolving from `rootProject.projectDir.parentFile.parentFile`
+(= `<repo>`, since the Gradle build root is `<repo>/apps/android`) so the
+count no longer depends on where `:app` sits. Also added
+`testLogging { exceptionFormat = FULL; showStandardStreams = true }` and two
+bounded "digest" annotations in the Android Gradle failure branches of
+`stack.yml`.
+**Verified:** Path arithmetic with `python3 os.path.normpath`:
+`apps/android/app + ../../core/target/release` → `<repo>/apps/core/...`
+(absent); `+ ../../../...` and `rootProject.projectDir.parentFile.parentFile`
+both → `<repo>/core/target/release`, which equals what the workflow's
+diagnostic resolves to from `apps/android`. `bash scripts/verify.sh` → PASS
+16/0/2 exit 0; `bash scripts/selftest.sh` → PASS 128/128 exit 0;
+`shellcheck --severity=style` over all 7 tracked `*.sh` → exit 0. Wrote a
+throwaway harness that parses both workflows, extracts all 32 `run:` block
+scalars (with `${{ }}` expressions substituted), and runs `bash -n` +
+shellcheck on each and `compile()` on every embedded `<<'PY'` heredoc (23 of
+them): 0 syntax errors, no new shellcheck finding, only the 2 pre-existing
+SC2038 notes. Executed the new digest script against a synthetic Gradle log
+shaped like the CI one → valid `::error title=...::` command, 1134 encoded
+characters, and it surfaced exactly the `loadError=`/`jna.library.path=` lines
+that were previously invisible. `TestExceptionFormat`'s fully qualified name
+was confirmed by GitHub code search (6976 `build.gradle.kts` hits) rather than
+recalled.
+**Learned:** GitHub truncates a check-run annotation **message** to 4096
+characters keeping the FRONT, so any publisher that encodes the last 60000
+characters of a Gradle log yields only the distribution banner — this is why
+several earlier sessions saw the same useless annotation and kept guessing.
+Publish a bounded, filtered digest instead. Gradle's default test log format
+prints only the exception class and line, so an assertion message carrying the
+diagnostics never reaches CI output unless `exceptionFormat = FULL`.
+`tasks.withType<Test> { ... }` resolves `file()`/`rootProject` against the
+enclosing `Project` receiver, which is why the buggy relative path silently
+produced a valid-looking but wrong absolute path.
+**Dead ends:** `gh api .../actions/jobs/<id>/logs` → the redirect target
+`productionresultssa*.blob.core.windows.net` returns EOF from the sandbox, so
+raw job logs are still unreadable; annotations and uploaded artifacts are the
+only channels. No JDK/Gradle/kotlinc/cargo/xcodebuild in the sandbox and
+`services.gradle.org` is outside the egress allowlist, so the Kotlin DSL
+change cannot be compiled locally — it is CI-verified only.
+**Next:** Observe the Stack run for this head; the digest annotations now make
+any further Android runtime failure readable in one cycle. Open follow-ups,
+deliberately not changed here: `environment("CI", System.getenv("CI") ?: "")`
+in `build.gradle.kts` sets `CI` to an empty string locally, and
+`RealRustBridgeProofTest` tests `System.getenv("CI") != null`, so `isCI` is
+true on a developer machine without Rust and the documented local skip never
+triggers; `apps/android/scripts/generate-uniffi-bindings.sh` still duplicates
+the workflow's rm/generate/validate sequence and lacks the workflow's
+`uniffi/greenfield5_core` wrong-package guard; the 2 SC2038 `find | xargs`
+notes; and the fallback's error variants are `data class`/`object` where
+UniFFI generates plain `class` with an overridden `message`.
