@@ -29,7 +29,7 @@ permissions:
 
 concurrency:
   group: stack-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false # stabilization: allow platform jobs to finish; avoid rerun self-cancellation
 
 jobs:
   rust-core:
