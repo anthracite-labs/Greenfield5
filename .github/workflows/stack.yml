@@ -303,6 +303,11 @@ jobs:
         working-directory: core
         run: |
           set -euo pipefail
+          # Clean up old placeholder that caused ambiguous type errors (greenfield5.swift vs greenfield5_core.swift)
+          # Real UniFFI generates greenfield5_core.swift + FFI header/modulemap; placeholder must match that name.
+          rm -f ../apps/ios/Greenfield5/Bridge/Generated/greenfield5.swift
+          rm -rf ../apps/ios/Greenfield5/Bridge/Generated/headers
+          rm -rf ../apps/ios/Greenfield5/Bridge/Generated/Greenfield5Core.xcframework
           if ! cargo build --release >/tmp/ios-host-build.txt 2>&1; then cat /tmp/ios-host-build.txt; python3 - /tmp/ios-host-build.txt 'iOS host cdylib build' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
@@ -311,7 +316,12 @@ jobs:
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
           exit 1; fi
-          ls -R ../apps/ios/Greenfield5/Bridge/Generated/
+          # Ensure only one Swift file defines the API — delete old greenfield5.swift if bindgen created greenfield5_core.swift and left old file
+          if [ -f "../apps/ios/Greenfield5/Bridge/Generated/greenfield5_core.swift" ] && [ -f "../apps/ios/Greenfield5/Bridge/Generated/greenfield5.swift" ]; then
+            echo "Both greenfield5.swift and greenfield5_core.swift exist after generation — removing old greenfield5.swift to avoid ambiguous types"
+            rm -f ../apps/ios/Greenfield5/Bridge/Generated/greenfield5.swift
+          fi
+          find ../apps/ios/Greenfield5/Bridge/Generated -type f -print 2>&1 || true
 
       - name: Generate XCFramework
         working-directory: apps/ios

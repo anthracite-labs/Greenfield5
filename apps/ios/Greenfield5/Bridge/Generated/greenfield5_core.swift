@@ -5,6 +5,10 @@
 // real bridge.
 //
 // Source of truth: core/src/uniffi_api.rs (UniFFI 0.32.1)
+// File name matches crate name greenfield5_core (real generated file is
+// greenfield5_core.swift + greenfield5_coreFFI.h/.modulemap). Previous
+// placeholder greenfield5.swift caused ambiguous type errors when both
+// files existed after CI generation (run 34969431006).
 
 import Foundation
 
