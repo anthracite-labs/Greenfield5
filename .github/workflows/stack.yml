@@ -205,7 +205,7 @@ jobs:
           exit 1; fi
           ls -R ../apps/android/app/src/main/java/uniffi || true
           echo "Generated Kotlin bindings:"
-          find ../apps/android/app/src/main/java/uniffi -type f | head -n 20
+          find ../apps/android/app/src/main/java/uniffi -type f -print 2>&1 | head -n 20 || true
 
       # The wrapper properties pin Gradle 9.6.1 with its SHA-256 checksum;
       # AGP 9.4.0 / Kotlin 2.4.20 pins live in gradle/libs.versions.toml.
@@ -322,7 +322,8 @@ jobs:
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
           exit 1; fi
-          ls -R Greenfield5/Bridge/Generated/ | head -n 100
+          echo "XCFramework generated, listing:"
+          find Greenfield5/Bridge/Generated -type f -print 2>&1 || true
 
       - name: Build iOS app (simulator)
         run: |
