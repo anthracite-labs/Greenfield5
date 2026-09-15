@@ -469,17 +469,31 @@ jobs:
             rc=$?
           fi
           if [ $rc -ne 0 ]; then
-            echo "generic/platform test failed (rc=$rc), trying platform=iOS Simulator,OS=latest..."
+            echo "generic/platform failed (rc=$rc), trying platform=iOS Simulator,OS=latest..."
             xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,OS=latest' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
             rc=$?
           fi
           if [ $rc -ne 0 ]; then
-            echo "platform=iOS Simulator OS=latest test failed (rc=$rc), trying platform=iOS Simulator..."
+            echo "platform=iOS Simulator OS=latest failed (rc=$rc), trying platform=iOS Simulator..."
             xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "platform=iOS Simulator failed (rc=$rc), trying iPhone 16..."
+            xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPhone 16' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "iPhone 16 failed (rc=$rc), trying generic/platform=iOS Simulator with OS=26.2..."
+            xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,OS=26.2,name=iPad (10th generation)' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
             rc=$?
           fi
           set -e
           cat /tmp/ios-xcode-test.txt
+          echo "=== Test log tail 1000 ==="
+          tail -n 1000 /tmp/ios-xcode-test.txt || true
+          echo "=== Grep errors ==="
+          grep -i -n "error:" /tmp/ios-xcode-test.txt | tail -n 500 || true
           if [ $rc -ne 0 ]; then
             tail -n 500 /tmp/ios-xcode-test.txt || true
             python3 - /tmp/ios-xcode-test.txt 'iOS xcode test' <<'PY'
@@ -488,3 +502,12 @@ jobs:
             exit 1
           fi
           tail -n 200 /tmp/ios-xcode-test.txt || true
+
+      - name: Upload iOS test log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-test-log
+          path: /tmp/ios-xcode-test.txt
+          if-no-files-found: warn
+          retention-days: 7
