@@ -30,7 +30,8 @@ permissions:
 
 concurrency:
   group: stack-${{ github.ref }}
-  cancel-in-progress: false # stabilization: allow platform jobs to finish; avoid rerun self-cancellation
+  # Superseded PR heads should cancel stale platform runs; main/manual runs still serialize.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   rust-core:
