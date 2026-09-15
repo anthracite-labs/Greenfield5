@@ -27,11 +27,11 @@ public struct GreenfieldRustBridge {
     }
 
     public static func createSenderSession(mode: ConnectionMode) -> GreenfieldSession {
-        return GreenfieldSession.new(role: .sender, mode: mode)
+        return GreenfieldSession(role: .sender, mode: mode)
     }
 
     public static func createViewerSession(mode: ConnectionMode) -> GreenfieldSession {
-        return GreenfieldSession.new(role: .viewer, mode: mode)
+        return GreenfieldSession(role: .viewer, mode: mode)
     }
 
     public static func runSenderJourney() throws -> [UInt8] {
