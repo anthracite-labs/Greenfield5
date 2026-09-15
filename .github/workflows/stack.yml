@@ -73,7 +73,7 @@ jobs:
       - name: Lint
         run: |
           set -euo pipefail
-          if ! cargo clippy --all-targets -- -D warnings >/tmp/clippy.txt 2>&1; then
+          if ! cargo clippy --locked --all-targets -- -D warnings >/tmp/clippy.txt 2>&1; then
             echo "---- clippy.txt size $(wc -c </tmp/clippy.txt) ----"
             echo "---- tail 200 ----"
             tail -n 200 /tmp/clippy.txt || true
@@ -113,7 +113,7 @@ jobs:
       - name: Test
         run: |
           set -euo pipefail
-          if ! cargo test >/tmp/test.txt 2>&1; then
+          if ! cargo test --locked >/tmp/test.txt 2>&1; then
             python3 - /tmp/test.txt 'cargo test output' <<'PY'
           import sys
           path, title = sys.argv[1], sys.argv[2]
@@ -124,21 +124,6 @@ jobs:
           PY
             exit 1
           fi
-
-      - name: Materialize Cargo.lock
-        run: |
-          set -euo pipefail
-          cargo generate-lockfile
-          test -s Cargo.lock
-          ls -lh Cargo.lock
-
-      - name: Upload Cargo.lock
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: core-cargo-lock
-          path: core/Cargo.lock
-          if-no-files-found: error
-          retention-days: 1
 
   android-shell:
     name: Android shell
@@ -186,7 +171,7 @@ jobs:
           set -euo pipefail
           echo \"NDK env: ANDROID_NDK_HOME=$ANDROID_NDK_HOME ANDROID_NDK_ROOT=$ANDROID_NDK_ROOT\"
           rustup target add aarch64-linux-android x86_64-linux-android
-          if ! cargo ndk -t arm64-v8a -t x86_64 --platform 29 -o ../apps/android/app/src/main/jniLibs build --release >/tmp/android-ndk.txt 2>&1; then
+          if ! cargo ndk -t arm64-v8a -t x86_64 --platform 29 -o ../apps/android/app/src/main/jniLibs build --release --locked >/tmp/android-ndk.txt 2>&1; then
             echo \"---- android-ndk.txt size $(wc -c </tmp/android-ndk.txt) ----\"
             tail -n 200 /tmp/android-ndk.txt || true
             python3 - /tmp/android-ndk.txt 'Android cargo ndk tail200' <<'PY'
@@ -212,11 +197,11 @@ jobs:
         working-directory: core
         run: |
           set -euo pipefail
-          if ! cargo build --release >/tmp/android-host-build.txt 2>&1; then cat /tmp/android-host-build.txt; python3 - /tmp/android-host-build.txt 'Android host build' <<'PY'
+          if ! cargo build --release --locked >/tmp/android-host-build.txt 2>&1; then cat /tmp/android-host-build.txt; python3 - /tmp/android-host-build.txt 'Android host build' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
           exit 1; fi
-          if ! cargo run --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.so --language kotlin --out-dir ../apps/android/app/src/main/java/ >/tmp/android-bindgen.txt 2>&1; then cat /tmp/android-bindgen.txt; python3 - /tmp/android-bindgen.txt 'Android Kotlin bindgen' <<'PY'
+          if ! cargo run --locked --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.so --language kotlin --out-dir ../apps/android/app/src/main/java/ >/tmp/android-bindgen.txt 2>&1; then cat /tmp/android-bindgen.txt; python3 - /tmp/android-bindgen.txt 'Android Kotlin bindgen' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
           exit 1; fi
@@ -326,11 +311,11 @@ jobs:
         working-directory: core
         run: |
           set -euo pipefail
-          if ! cargo build --release --target aarch64-apple-ios >/tmp/ios-build-aarch64.txt 2>&1; then cat /tmp/ios-build-aarch64.txt; python3 - /tmp/ios-build-aarch64.txt 'iOS aarch64 build' <<'PY'
+          if ! cargo build --release --locked --target aarch64-apple-ios >/tmp/ios-build-aarch64.txt 2>&1; then cat /tmp/ios-build-aarch64.txt; python3 - /tmp/ios-build-aarch64.txt 'iOS aarch64 build' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
           exit 1; fi
-          if ! cargo build --release --target aarch64-apple-ios-sim >/tmp/ios-build-sim-arm.txt 2>&1; then cat /tmp/ios-build-sim-arm.txt; python3 - /tmp/ios-build-sim-arm.txt 'iOS sim arm64 build' <<'PY'
+          if ! cargo build --release --locked --target aarch64-apple-ios-sim >/tmp/ios-build-sim-arm.txt 2>&1; then cat /tmp/ios-build-sim-arm.txt; python3 - /tmp/ios-build-sim-arm.txt 'iOS sim arm64 build' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
           exit 1; fi
@@ -346,11 +331,11 @@ jobs:
           rm -rf ../apps/ios/Greenfield5/Bridge/Generated/headers
           rm -rf ../apps/ios/Greenfield5/Bridge/Generated/Greenfield5Core.xcframework
           rm -rf target/xcframework-headers
-          if ! cargo build --release >/tmp/ios-host-build.txt 2>&1; then cat /tmp/ios-host-build.txt; python3 - /tmp/ios-host-build.txt 'iOS host cdylib build' <<'PY'
+          if ! cargo build --release --locked >/tmp/ios-host-build.txt 2>&1; then cat /tmp/ios-host-build.txt; python3 - /tmp/ios-host-build.txt 'iOS host cdylib build' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
           exit 1; fi
-          if ! cargo run --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.dylib --language swift --out-dir ../apps/ios/Greenfield5/Bridge/Generated/ >/tmp/ios-bindgen.txt 2>&1; then cat /tmp/ios-bindgen.txt; python3 - /tmp/ios-bindgen.txt 'iOS Swift bindgen' <<'PY'
+          if ! cargo run --locked --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.dylib --language swift --out-dir ../apps/ios/Greenfield5/Bridge/Generated/ >/tmp/ios-bindgen.txt 2>&1; then cat /tmp/ios-bindgen.txt; python3 - /tmp/ios-bindgen.txt 'iOS Swift bindgen' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
           exit 1; fi
