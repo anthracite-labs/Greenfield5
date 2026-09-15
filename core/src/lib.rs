@@ -53,6 +53,7 @@ pub fn version() -> &'static str {
 // UniFFI scaffolding — proc-macro only, no UDL. The macro generates unsafe FFI
 // shims, so we allow unsafe_code for this expansion only. Our own code remains
 // denied via the crate-level deny above.
+#[allow(unused_attributes)]
 #[allow(unsafe_code)]
 #[allow(missing_docs)]
 #[allow(clippy::all)]
