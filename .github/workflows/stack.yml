@@ -197,6 +197,10 @@ jobs:
         working-directory: core
         run: |
           set -euo pipefail
+          # Local builds keep a committed pure-Kotlin fallback. CI must remove it
+          # before generation so the app compiles only against real UniFFI bindings.
+          rm -f ../apps/android/app/src/main/java/uniffi/greenfield5/greenfield5.kt
+          rm -rf ../apps/android/app/src/main/java/uniffi/greenfield5_core
           if ! cargo build --release --locked >/tmp/android-host-build.txt 2>&1; then cat /tmp/android-host-build.txt; python3 - /tmp/android-host-build.txt 'Android host build' <<'PY'
           import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
           PY
@@ -208,6 +212,336 @@ jobs:
           ls -R ../apps/android/app/src/main/java/uniffi || true
           echo "Generated Kotlin bindings:"
           find ../apps/android/app/src/main/java/uniffi -type f -print 2>&1 | head -n 20 || true
+          GENERATED_KT=../apps/android/app/src/main/java/uniffi/greenfield5/greenfield5_core.kt
+          test -f "$GENERATED_KT"
+          grep -q '^package uniffi.greenfield5
+
+      # The wrapper properties pin Gradle 9.6.1 with its SHA-256 checksum;
+      # AGP 9.4.0 / Kotlin 2.4.20 pins live in gradle/libs.versions.toml.
+      - name: Unit tests and debug assembly (with Rust bridge)
+        env:
+          LD_LIBRARY_PATH: ${{ github.workspace }}/core/target/release
+          DYLD_LIBRARY_PATH: ${{ github.workspace }}/core/target/release
+        run: |
+          set -euo pipefail
+          echo "Host Rust cdylib for JVM bridge-proof test:"
+          ls -lh ../../core/target/release/libgreenfield5_core.* 2>&1 || true
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+          echo "Checking JNA library path via gradle test config (build.gradle.kts sets jna.library.path)"
+          if ! ./gradlew testDebugUnitTest --tests "dev.greenfield5.app.bridge.RealRustBridgeProofTest" --stacktrace --no-daemon -Djna.library.path=${{ github.workspace }}/core/target/release >/tmp/android-gradle-real-proof.txt 2>&1; then
+            echo "---- RealRustBridgeProofTest failed ----"
+            cat /tmp/android-gradle-real-proof.txt
+            tail -n 500 /tmp/android-gradle-real-proof.txt || true
+            python3 - /tmp/android-gradle-real-proof.txt 'Android real Rust proof' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            exit 1
+          fi
+          echo "Real Rust proof passed, now running all unit tests + assembleDebug"
+          if ! ./gradlew testDebugUnitTest assembleDebug --stacktrace --no-daemon -Djna.library.path=${{ github.workspace }}/core/target/release >/tmp/android-gradle-debug.txt 2>&1; then cat /tmp/android-gradle-debug.txt; tail -n 300 /tmp/android-gradle-debug.txt; python3 - /tmp/android-gradle-debug.txt 'Android gradle debug' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          echo "---- Real proof test output ----"
+          find app/build/test-results -name "*RealRustBridgeProofTest*" -type f | xargs cat 2>&1 || true
+          grep -R "RealRustBridgeProof" app/build/test-results 2>&1 | head -n 100 || true
+
+      - name: Release assembly (proves R8 keep rules)
+        run: |
+          set -euo pipefail
+          if ! ./gradlew assembleRelease --stacktrace --no-daemon >/tmp/android-gradle-release.txt 2>&1; then cat /tmp/android-gradle-release.txt; tail -n 300 /tmp/android-gradle-release.txt; python3 - /tmp/android-gradle-release.txt 'Android gradle release' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+
+  ios-shell:
+    name: iOS shell
+    runs-on: macos-15
+    # ADR-0006 requires Xcode 16+ (objectVersion 77, Swift 6.0). macos-14 default
+    # is Xcode 15.4 / Swift 5.10 / SDK 17.5 (observed in run 34962440056), which
+    # does not match the committed project. macos-15 default is Xcode 16.0 per
+    # https://github.com/actions/runner-images/issues/11486, compatible with Swift 6.
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Show Xcode version
+        run: |
+          echo "Available Xcode installations:"
+          ls -1 /Applications/Xcode*.app 2>&1 || true
+          echo "Selecting compatible Xcode (ADR-0006: objectVersion 77 = Xcode 16+, modeled on Xcode 16/26): prefer Xcode 26.x if available, fallback to 16.x"
+          # macos-15 runner has Xcode 26 installations available per observed env; previous job reported Xcode 16.2 active.
+          # We explicitly select the newest compatible version to ensure xcodebuild verification uses the recorded toolchain decision.
+          if [ -d "/Applications/Xcode_26.0.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_26.0.app
+          elif [ -d "/Applications/Xcode_26.1.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_26.1.app
+          elif [ -d "/Applications/Xcode_26.0.1.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_26.0.1.app
+          elif [ -d "/Applications/Xcode_16.4.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.4.app
+          elif [ -d "/Applications/Xcode_16.2.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.2.app
+          elif [ -d "/Applications/Xcode_16.1.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.1.app
+          elif [ -d "/Applications/Xcode_16.0.app" ]; then
+            sudo xcode-select -s /Applications/Xcode_16.0.app
+          else
+            echo "No known Xcode version found, using system default"
+          fi
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version || true
+          swift --version
+
+      - name: Show Rust toolchain (for UniFFI bridge)
+        working-directory: core
+        run: |
+          rustup show
+          cargo --version
+          rustc --version
+
+      - name: Install Rust iOS targets
+        working-directory: core
+        run: |
+          set -euo pipefail
+          # macos-14 is aarch64; x86_64-apple-ios-sim not supported on 1.98.1-aarch64-apple-darwin toolchain (run 34962440056)
+          if ! rustup target add aarch64-apple-ios aarch64-apple-ios-sim >/tmp/ios-targets.txt 2>&1; then cat /tmp/ios-targets.txt; python3 - /tmp/ios-targets.txt 'iOS rustup target add' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          cat /tmp/ios-targets.txt
+
+      - name: Build Rust core for iOS (staticlib)
+        working-directory: core
+        run: |
+          set -euo pipefail
+          if ! cargo build --release --locked --target aarch64-apple-ios >/tmp/ios-build-aarch64.txt 2>&1; then cat /tmp/ios-build-aarch64.txt; python3 - /tmp/ios-build-aarch64.txt 'iOS aarch64 build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          if ! cargo build --release --locked --target aarch64-apple-ios-sim >/tmp/ios-build-sim-arm.txt 2>&1; then cat /tmp/ios-build-sim-arm.txt; python3 - /tmp/ios-build-sim-arm.txt 'iOS sim arm64 build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          ls -lh target/*/release/libgreenfield5_core.a
+
+      - name: Generate Swift bindings via UniFFI
+        working-directory: core
+        run: |
+          set -euo pipefail
+          # Clean up old placeholder that caused ambiguous type errors (greenfield5.swift vs greenfield5_core.swift)
+          # Real UniFFI generates greenfield5_core.swift + FFI header/modulemap; placeholder must match that name.
+          rm -f ../apps/ios/Greenfield5/Bridge/Generated/greenfield5.swift
+          rm -rf ../apps/ios/Greenfield5/Bridge/Generated/headers
+          rm -rf ../apps/ios/Greenfield5/Bridge/Generated/Greenfield5Core.xcframework
+          rm -rf target/xcframework-headers
+          if ! cargo build --release --locked >/tmp/ios-host-build.txt 2>&1; then cat /tmp/ios-host-build.txt; python3 - /tmp/ios-host-build.txt 'iOS host cdylib build' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          if ! cargo run --locked --bin uniffi-bindgen generate --library target/release/libgreenfield5_core.dylib --language swift --out-dir ../apps/ios/Greenfield5/Bridge/Generated/ >/tmp/ios-bindgen.txt 2>&1; then cat /tmp/ios-bindgen.txt; python3 - /tmp/ios-bindgen.txt 'iOS Swift bindgen' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          # Ensure only one Swift file defines the API — delete old greenfield5.swift if bindgen created greenfield5_core.swift and left old file
+          if [ -f "../apps/ios/Greenfield5/Bridge/Generated/greenfield5_core.swift" ] && [ -f "../apps/ios/Greenfield5/Bridge/Generated/greenfield5.swift" ]; then
+            echo "Both greenfield5.swift and greenfield5_core.swift exist after generation — removing old greenfield5.swift to avoid ambiguous types"
+            rm -f ../apps/ios/Greenfield5/Bridge/Generated/greenfield5.swift
+          fi
+          find ../apps/ios/Greenfield5/Bridge/Generated -type f -print 2>&1 || true
+
+      - name: Generate XCFramework
+        working-directory: apps/ios
+        run: |
+          set -euo pipefail
+          chmod +x scripts/generate-xcframework.sh || true
+          if ! ./scripts/generate-xcframework.sh >/tmp/ios-xcf.txt 2>&1; then cat /tmp/ios-xcf.txt; python3 - /tmp/ios-xcf.txt 'iOS XCFramework' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          echo "XCFramework generated, listing:"
+          find Greenfield5/Bridge/Generated -type f -print 2>&1 || true
+
+      - name: Build iOS app (simulator)
+        run: |
+          set -euo pipefail
+          echo "Available destinations for Greenfield5 scheme:"
+          xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -showdestinations || true
+          echo "Simctl runtimes:"
+          xcrun simctl list runtimes 2>&1 | head -n 100 || true
+          echo "Simctl devices available:"
+          xcrun simctl list devices available 2>&1 | head -n 200 || true
+          echo "Xcode version:"
+          xcodebuild -version
+          echo "Project file references:"
+          grep -n "Greenfield5Core.xcframework" Greenfield5.xcodeproj/project.pbxproj || true
+          echo "Generated files listing:"
+          find Greenfield5/Bridge/Generated -type f -ls 2>&1 || true
+          echo "XCFramework Info.plist:"
+          cat Greenfield5/Bridge/Generated/Greenfield5Core.xcframework/Info.plist 2>&1 || true
+          echo "XCFramework headers listing:"
+          find Greenfield5/Bridge/Generated/Greenfield5Core.xcframework -type f -name "*.h" -o -name "*.modulemap" | xargs ls -lh 2>&1 || true
+          for f in Greenfield5/Bridge/Generated/Greenfield5Core.xcframework/*/Headers/module.modulemap; do
+            echo "=== $f ==="
+            cat "$f" 2>&1 || true
+          done
+          echo "Swift bindings head (first 300 lines):"
+          head -n 300 Greenfield5/Bridge/Generated/greenfield5_core.swift 2>&1 || true
+          # Xcode 26 on macos-15 has iPad (10th gen) with OS 18.5/18.6/26.0.1/26.1/26.2 (run 34973769653)
+          # iPhone 16 not available in that image; use iPad as primary, then generic, then Any device
+          set +e
+          xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (10th generation),OS=26.0.1' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "iPad 10th gen 26.0.1 failed (rc=$rc), trying iPad 10th gen 18.6..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (10th generation),OS=18.6' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "iPad 10th gen 18.6 failed (rc=$rc), trying iPad 10th gen without OS..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (10th generation)' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "iPad 10th gen without OS failed (rc=$rc), trying iPad A16..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (A16)' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "iPad A16 failed (rc=$rc), trying generic/platform=iOS Simulator..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'generic/platform=iOS Simulator' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "generic/platform failed (rc=$rc), trying platform=iOS Simulator,OS=latest..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,OS=latest' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "platform=iOS Simulator OS=latest failed (rc=$rc), trying platform=iOS Simulator..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "platform=iOS Simulator failed (rc=$rc), trying iPhone 16..."
+            xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPhone 16' -configuration Debug build CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-build.txt 2>&1
+            rc=$?
+          fi
+          set -e
+          cat /tmp/ios-xcode-build.txt
+          echo "=== Build log tail 1000 ==="
+          tail -n 1000 /tmp/ios-xcode-build.txt || true
+          echo "=== Grep for error: (last 500) ==="
+          grep -i -n "error:" /tmp/ios-xcode-build.txt | tail -n 500 || true
+          echo "=== Grep for RustBuffer/ForeignBytes/canImport/checksum ==="
+          grep -n "RustBuffer\|ForeignBytes\|RustCallStatus\|canImport\|ffi_greenfield5\|checksum\|Greenfield5Core\|ProcessXCFramework\|undefined symbol\|linker command failed" /tmp/ios-xcode-build.txt | tail -n 500 || true
+          echo "=== Full error context ==="
+          grep -n -A3 -B3 "error:" /tmp/ios-xcode-build.txt | tail -n 1000 || true
+          # Prepare error summary for annotation
+          grep -i -n "error:" /tmp/ios-xcode-build.txt | tail -n 100 > /tmp/ios-errors-summary.txt 2>&1 || echo "no errors found" > /tmp/ios-errors-summary.txt
+          grep -n "RustBuffer\|ForeignBytes\|RustCallStatus\|canImport\|ffi_greenfield5\|checksum\|undefined symbol" /tmp/ios-xcode-build.txt | tail -n 100 >> /tmp/ios-errors-summary.txt 2>&1 || true
+          echo "=== Error summary ==="
+          cat /tmp/ios-errors-summary.txt
+          if [ $rc -ne 0 ]; then
+            echo "=== Annotation from error summary ==="
+            python3 - /tmp/ios-errors-summary.txt 'iOS xcodebuild errors' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            echo "=== Annotation from full build tail ==="
+            python3 - /tmp/ios-xcode-build.txt 'iOS xcodebuild full tail' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            exit 1
+          fi
+          tail -n 100 /tmp/ios-xcode-build.txt || true
+
+      - name: Upload iOS build log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-build-log
+          path: /tmp/ios-xcode-build.txt
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Run iOS tests
+        run: |
+          set -euo pipefail
+          echo "Running iOS tests with fallback destinations..."
+          set +e
+          xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (10th generation),OS=26.0.1' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
+          rc=$?
+          if [ $rc -ne 0 ]; then
+            echo "iPad 10th gen 26.0.1 test failed (rc=$rc), trying iPad 10th gen 18.6..."
+            xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (10th generation),OS=18.6' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "iPad 10th gen 18.6 test failed (rc=$rc), trying iPad 10th gen without OS..."
+            xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (10th generation)' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "iPad 10th gen without OS test failed (rc=$rc), trying iPad A16..."
+            xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPad (A16)' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "iPad A16 test failed (rc=$rc), trying generic/platform=iOS Simulator..."
+            xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'generic/platform=iOS Simulator' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "generic/platform failed (rc=$rc), trying platform=iOS Simulator,OS=latest..."
+            xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,OS=latest' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "platform=iOS Simulator OS=latest failed (rc=$rc), trying platform=iOS Simulator..."
+            xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "platform=iOS Simulator failed (rc=$rc), trying iPhone 16..."
+            xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,name=iPhone 16' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
+            rc=$?
+          fi
+          if [ $rc -ne 0 ]; then
+            echo "iPhone 16 failed (rc=$rc), trying generic/platform=iOS Simulator with OS=26.2..."
+            xcodebuild test -project Greenfield5.xcodeproj -scheme Greenfield5 -destination 'platform=iOS Simulator,OS=26.2,name=iPad (10th generation)' -configuration Debug CODE_SIGNING_ALLOWED=NO > /tmp/ios-xcode-test.txt 2>&1
+            rc=$?
+          fi
+          set -e
+          cat /tmp/ios-xcode-test.txt
+          echo "=== Test log tail 1000 ==="
+          tail -n 1000 /tmp/ios-xcode-test.txt || true
+          echo "=== Grep errors ==="
+          grep -i -n "error:" /tmp/ios-xcode-test.txt | tail -n 500 || true
+          if [ $rc -ne 0 ]; then
+            tail -n 500 /tmp/ios-xcode-test.txt || true
+            python3 - /tmp/ios-xcode-test.txt 'iOS xcode test' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+            exit 1
+          fi
+          tail -n 200 /tmp/ios-xcode-test.txt || true
+
+      - name: Upload iOS test log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ios-test-log
+          path: /tmp/ios-xcode-test.txt
+          if-no-files-found: warn
+          retention-days: 7
+ "$GENERATED_KT"
+          if [ -d ../apps/android/app/src/main/java/uniffi/greenfield5_core ]; then
+            echo "ERROR: UniFFI ignored core/uniffi.toml package_name; refusing stub/default-package fallback" >&2
+            exit 1
+          fi
 
       # The wrapper properties pin Gradle 9.6.1 with its SHA-256 checksum;
       # AGP 9.4.0 / Kotlin 2.4.20 pins live in gradle/libs.versions.toml.

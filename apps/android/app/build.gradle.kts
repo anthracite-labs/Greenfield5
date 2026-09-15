@@ -79,6 +79,8 @@ tasks.withType<Test> {
     // Provide via JNA library path so System.loadLibrary and JNA can find it in CI.
     // Local dev without Rust toolchain will still work via fallback, but CI proof test will fail if not found.
     val coreReleaseDir = file("../../core/target/release").absolutePath
+    val hostNativeLib = file("../../core/target/release/${System.mapLibraryName("greenfield5_core")}").absolutePath
+    systemProperty("greenfield5.native.lib.path", hostNativeLib)
     systemProperty("jna.library.path", coreReleaseDir)
     systemProperty("java.library.path", coreReleaseDir)
     environment("LD_LIBRARY_PATH", coreReleaseDir)

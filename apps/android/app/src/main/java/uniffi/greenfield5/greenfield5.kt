@@ -57,7 +57,7 @@ sealed class BridgeError : Exception() {
 // core/src/session.rs logic for local builds. Real generated bindings
 // delegate to Rust via JNA.
 
-class GreenfieldSession private constructor(
+class GreenfieldSession(
     private val role: Role,
     private val mode: ConnectionMode
 ) {

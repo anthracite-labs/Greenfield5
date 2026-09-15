@@ -6,7 +6,7 @@ import uniffi.greenfield5.GreenfieldSession
 import uniffi.greenfield5.Role
 import uniffi.greenfield5.SessionCommand
 import uniffi.greenfield5.SessionState
-import uniffi.greenfield5.coreVersion
+import uniffi.greenfield5.coreVersion as rustCoreVersion
 
 /**
  * Real native↔Rust bridge for Android.
@@ -27,8 +27,14 @@ object GreenfieldRustBridge {
 
     init {
         try {
-            // Loads libgreenfield5_core.so from jniLibs/<abi>/
-            System.loadLibrary("greenfield5_core")
+            // Android uses the packaged jniLibs library. JVM bridge-proof tests
+            // may provide an explicit host cdylib path so loading is deterministic.
+            val explicitPath = System.getProperty("greenfield5.native.lib.path")
+            if (!explicitPath.isNullOrBlank()) {
+                System.load(explicitPath)
+            } else {
+                System.loadLibrary("greenfield5_core")
+            }
             libraryLoaded = true
         } catch (e: Throwable) {
             // Expected in JVM unit tests or when NDK build not yet run.
@@ -42,17 +48,17 @@ object GreenfieldRustBridge {
     fun loadError(): Throwable? = loadError
 
     fun coreVersion(): String = try {
-        coreVersion()
+        rustCoreVersion()
     } catch (e: Throwable) {
         "0.1.0-fallback"
     }
 
     fun createSenderSession(mode: ConnectionMode): GreenfieldSession {
-        return GreenfieldSession.new(Role.SENDER, mode)
+        return GreenfieldSession(Role.SENDER, mode)
     }
 
     fun createViewerSession(mode: ConnectionMode): GreenfieldSession {
-        return GreenfieldSession.new(Role.VIEWER, mode)
+        return GreenfieldSession(Role.VIEWER, mode)
     }
 
     fun createSessionFromCodes(roleCode: UByte, modeCode: UByte): GreenfieldSession {
