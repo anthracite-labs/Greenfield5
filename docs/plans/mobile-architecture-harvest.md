@@ -141,3 +141,9 @@ Android setup action failed again with no readable failure annotation; raw job
 logs redirect to blocked blob storage. Replace the opaque action in candidate
 only with explicit sdkmanager commands and captured errors, retaining exact NDK.
 Control action/jobs remain untouched. Not yet an upstream defect finding.
+
+Run 35029393019 Android setup captured `Failed to find package
+'platforms;android-37'`. Next attempt matches the control's NDK-only provision
+and lets the unchanged compileSdk 37 Gradle configuration resolve its SDK; no
+SDK downgrade. If NDK provision fails, capture available NDK/platform package
+listing before exit. This distinguishes environment availability from FFI bugs.
