@@ -778,3 +778,64 @@ jobs:
               print(f"::notice title=BoltFFI lock chunk {i//3000}::{chunk}")
           PYTHON
           fi
+
+  boltffi-generation:
+    name: BoltFFI generation (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: android
+          - os: macos-15
+            target: apple
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        working-directory: spikes/boltffi
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6
+        if: matrix.target == 'android'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@4dc3d59d95d67dcd800aeee9341a00d3f7d6548
+        if: matrix.target == 'android'
+      - name: Android NDK
+        if: matrix.target == 'android'
+        run: sdkmanager 'ndk;28.0.12916984'
+      - name: Install exact CLI
+        timeout-minutes: 12
+        run: |
+          set -euo pipefail
+          cargo install boltffi_cli --version '=0.30.1' --locked > evidence.log 2>&1
+          boltffi --version >> evidence.log
+      - name: Generate and pack real artifacts
+        timeout-minutes: 12
+        env:
+          BOLT_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          boltffi pack "$BOLT_TARGET" --release >> evidence.log 2>&1
+          find generated -type f -print >> evidence.log
+      - name: Publish compact diagnostics
+        if: always()
+        run: |
+          python3 - <<'PYTHON'
+          import pathlib
+          p = pathlib.Path("evidence.log")
+          text = p.read_text()[-3500:] if p.exists() else "NO EXECUTION LOG"
+          text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+          print("::notice title=BoltFFI generation result::" + text)
+          PYTHON
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: boltffi-${{ matrix.target }}-evidence
+          path: |
+            spikes/boltffi/generated
+            spikes/boltffi/Cargo.lock
+            spikes/boltffi/evidence.log
+          retention-days: 7
