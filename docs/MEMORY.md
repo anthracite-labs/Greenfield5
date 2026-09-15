@@ -638,3 +638,56 @@ be reused). Issue #15 criteria 8, 9, 11 and 12 are MET locally; criterion 10
 (exact-head stack CI green with run IDs in the PR body) is NOT MET and is
 blocked on that fast-forward — recorded as pending, never as passed. Only after
 PR #17 merges does the blocked research-harvest task's entry condition clear.
+
+## 2026-09-15 — Mobile harvest checkpoint; executable A/B incomplete
+
+**Context:** `arena/01a0a701-greenfield5`, user-requested harvest/BoltFFI task;
+references #11/#15, closes neither. Fresh fetch/API confirmed main and PR #17
+merge at `6c85f9a098aba114c94c6247257ea013fa53abd1`. ADR-0007 remains in force.
+**Did:** Wrote three-phase plan before any production change (none made), then
+partial eight-donor source report at
+[open-source-mobile-architecture-harvest.md](research/open-source-mobile-architecture-harvest.md).
+Exact inspected heads: crux `2075a20d23a1a209f89cebd9b3847e1b0c313dc6`
+(Apache-2.0); boltffi `d5eba2e347a957a7fce67bb738ae37d985ba082b` (MIT);
+iroh-ffi `3103bf5295be6d50c5272ff7a426e9b539f3f587` (MIT OR Apache-2.0);
+hello-iroh-ffi `3249baad34fd400005c5397f021677fc2ea1671a` (MIT);
+iroh-live `de7f43bfc466988f08b7e63acdd7fb295a9f9fd2` (MIT OR Apache-2.0);
+LiveKit Android `12433f2299cde56ea4c085a36ab873d2f51294da` (Apache-2.0 plus
+NOTICE); LiveKit Swift `eda7d80001cfe87e406dbfa58d77e9694de39727` (Apache-2.0
+plus NOTICE); RustDesk `851d2df88cc8ef7a8368f74e8b2e7254861ee00a` (AGPL-3.0).
+All conceptual reference only, no copied code or dependencies. HARVEST target
+packaging, VM/context initialization, selected path/RTT, bounded media queues,
+projection/extension cleanup; REJECT rooms, browser relay, LiveKit transport,
+Crux architecture transplant, RustDesk architecture/code and unbounded host
+stream delivery. These are recommendations, not implemented harvests.
+**Learned:** Crux pins CLI/runtime 0.30.1 but retains app-type generation and
+Gradle staging. BoltFFI Swift stream template explicitly uses unbounded host
+buffer despite bounded native ring. Open #664 reports concurrent-close native
+handle risk; #778 class Sendable is unresolved. iroh-live currently says iOS
+never built/tested, Android tested against Linux. iroh-ffi requires context
+before endpoint regardless of generator and selects Iroh 1.0.0. Its page-size
+checker can pass with no matching libraries. Current core/Cargo.lock exists,
+contrary to historical follow-up text. Source reports are not device proof.
+**Verified:** `git diff --check` clean. Initial verify 14/0/4, selftest 127/128
+failed workflows_yaml/corrupted because no parser. `pip install --user` rejected
+by externally-managed Python; installed PyYAML 6.0.3 into external cache with
+`--target` instead. With `PYTHONPATH=/home/user/.cache/harvest/python`,
+`bash scripts/verify.sh` PASS 15/0/3 and `bash scripts/selftest.sh` PASS 128/128.
+Skips: shellcheck unavailable; no_app_stack valid transition; AgentShield ran
+but scanned zero config files (advisory). Sequential code/security review found
+no introduced HIGH/CRITICAL; spec review FAIL/incomplete (full donor audit and
+Phase B/C not done). Historical Stack run 35022211567 was re-fetched: all three
+platform/core jobs success for a52c7cb42ffdd20b61fae4ea35b8fc0c4485f655 only.
+**Unavailable / not done:** cargo/rustc/java/gradle/adb/swift/xcodebuild absent;
+no candidate built, no async/stream test executed, no A/B size or parity result.
+CI candidate route not attempted; it is not proven unavailable. Physical proof:
+UNVERIFIED — PHYSICAL DEVICE REQUIRED. No failed native experiment to report.
+**Result:** BLOCKED/incomplete checkpoint, not ADOPT/KEEP/DEFER sign-off. UniFFI
+unchanged; no superseding ADR. Next bounded PR is completion of isolated native
+BoltFFI contract + async/bounded-event A/B in CI, before synthetic media. Leave
+this research PR open for independent review; final-head run IDs go in PR body.
+
+**Review correction:** iroh-live declares MIT OR Apache-2.0, but its LICENSE-MIT
+and LICENSE-APACHE are byte-identical Apache text (`cmp` exit 0). Report flags
+this provenance anomaly; MIT election requires upstream clarification. No copy
+or dependency adoption occurred.
