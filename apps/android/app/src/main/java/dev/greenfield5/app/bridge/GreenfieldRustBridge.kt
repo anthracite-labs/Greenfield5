@@ -1,6 +1,5 @@
 package dev.greenfield5.app.bridge
 
-import uniffi.greenfield5.BridgeError
 import uniffi.greenfield5.ConnectionMode
 import uniffi.greenfield5.GreenfieldSession
 import uniffi.greenfield5.Role
