@@ -51,10 +51,14 @@ pub fn version() -> &'static str {
 }
 
 // UniFFI scaffolding — proc-macro only, no UDL. The macro generates unsafe FFI
-// shims, so we allow unsafe_code for this expansion only. Our own code remains
-// denied via the crate-level deny above.
-#[allow(unused_attributes)]
+// shims. We place it in its own module with allowed unsafe_code and missing_docs,
+// avoiding the `unused_attributes` lint that occurs when `#[allow]` is placed
+// directly on the macro invocation in Rust 2024 (see stack.yml tail200 diagnostics
+// for run 34961828367). Our own modules above deny unsafe_code, preserving the
+// safety boundary.
 #[allow(unsafe_code)]
 #[allow(missing_docs)]
 #[allow(clippy::all)]
-uniffi::setup_scaffolding!();
+mod uniffi_scaffolding {
+    uniffi::setup_scaffolding!();
+}

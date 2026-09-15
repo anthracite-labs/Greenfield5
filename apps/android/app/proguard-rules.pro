@@ -12,11 +12,20 @@
 
 # Keep all generated UniFFI bindings for greenfield5
 -keep class uniffi.greenfield5.** { *; }
+-keep class uniffi.greenfield5_core.** { *; }
 -keep class dev.greenfield5.app.bridge.** { *; }
 
 # Keep JNA
 -keep class com.sun.jna.** { *; }
 -keepclassmembers class * extends com.sun.jna.* { public *; }
+
+# JNA references java.awt on desktop JVM, which does not exist on Android.
+# R8 needs dontwarn for those missing classes, otherwise minifyReleaseWithR8 fails.
+# Verified via CI: run 34960598085 failed with Missing class java.awt.Component
+# referenced from com.sun.jna.Native$AWT. Adding dontwarn allows R8 to proceed.
+-dontwarn java.awt.*
+-dontwarn com.sun.jna.awt.*
+-dontwarn com.sun.jna.Native$AWT
 
 # Keep native methods and JNI entry points
 -keepclasseswithmembernames class * {

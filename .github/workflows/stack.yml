@@ -232,7 +232,12 @@ jobs:
       - name: Install Rust iOS targets
         working-directory: core
         run: |
-          rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios-sim
+          set -euo pipefail
+          if ! rustup target add aarch64-apple-ios aarch64-apple-ios-sim x86_64-apple-ios-sim >/tmp/ios-targets.txt 2>&1; then cat /tmp/ios-targets.txt; python3 - /tmp/ios-targets.txt 'iOS rustup target add' <<'PY'
+          import sys; path,title=sys.argv[1],sys.argv[2]; data=open(path,'rb').read().decode('utf-8','replace')[-60000:]; enc=data.replace('%','%25').replace('\r','%0D').replace('\n','%0A'); t=title.replace('%','%25').replace(':','%3A').replace(',','%2C'); print(f'::error title={t}::{enc}')
+          PY
+          exit 1; fi
+          cat /tmp/ios-targets.txt
 
       - name: Build Rust core for iOS (staticlib)
         working-directory: core
