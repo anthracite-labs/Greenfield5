@@ -750,3 +750,19 @@ The candidate's ownership invariant, now stated in one line and enforced by patc
 0004 v3: `rust_future_free(handle)` runs exactly once, never inside a native call or
 a runtime-delivered callback, and always before the caller is resumed. The
 previous behavior is what the pre-patch run recorded.
+
+## Correction — exact-head PR #19 result (`b1adb9d33025424aa463bfd66061959baab71fc5`, 2026-09-16)
+
+The preceding PR #19 entry described an earlier head and is superseded for
+acceptance purposes by this exact-head result. Run `35121808215` belongs to
+`b1adb9d33025424aa463bfd66061959baab71fc5`: Rust job `104881538499` passed;
+Apple job `104881538243` passed with 19 real-Rust simulator tests; Android job
+`104881538579` failed in minified instrumentation with
+`ClassNotFoundException: kotlin.jvm.internal.Lambda` after the debug path passed.
+The control workflow run `35121808672` passed (`104881172108`,
+`104881171652`). The PR therefore remains **DEFER**, not ADOPT: minified native
+execution failed, host buffering is unbounded (`100 produced / 20 consumed /
+80 hostBuffered`), ownership coverage is not exhaustive, and no material
+advantage over UniFFI was measured. Candidate source/workflow were removed after
+this finite retest; no generated output was retained or hand-edited. Physical
+device evidence remains **UNVERIFIED — PHYSICAL DEVICE REQUIRED**.

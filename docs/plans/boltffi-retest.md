@@ -652,3 +652,30 @@ MoQ, Iroh, screen capture, ReplayKit, MediaProjection, pairing, audio, UI
 redesign, production BoltFFI migration, production UniFFI changes, and any
 change to `config/project.env`. No physical-device claims; anything not executed
 is recorded as SKIPPED / NOT EXECUTED / UNVERIFIED — PHYSICAL DEVICE REQUIRED.
+
+## Final decision gate — exact head `b1adb9d33025424aa463bfd66061959baab71fc5` (2026-09-16)
+
+**Decision: DEFER.** This is a finite stop, not permission for another local
+patch loop. The candidate artifacts and candidate workflow are removed; this
+report, the harvest measurements, and this memory entry are the durable evidence.
+Production UniFFI 0.32.1 and ADR-0007 remain unchanged.
+
+| Load-bearing area | Status at exact head | Evidence and consequence |
+| --- | --- | --- |
+| Rust contract | **VERIFIED** | Run `35121808215`, job `104881538499`, success; candidate `cargo test --locked`. Supports the candidate only. |
+| Swift 6 generated host | **VERIFIED for patched candidate** | Run `35121808215`, job `104881538243`, success: unpatched exit 1, patched exit 0; params-only exit 1 proves `T: Sendable` is required. The class-returning characterization still rejects non-Sendable `Leaf`; no blanket `@unchecked Sendable` was added. |
+| Swift native lifetime/cancellation | **VERIFIED for exercised probe** | Same Apple job: 19 real-Rust simulator tests passed; patched six lifetime probes report `free-once=true`, `frees=1`, `violations=0`, including repeated cancellation, pre-cancel and wake-driven repoll. The unpatched RED reports both unsafe free locations. This does not prove every unexercised generated type/path. |
+| Android debug JNI | **VERIFIED** | Same run, job `104881538579`: debug APK and test APK assembled, installed and executed real Kotlin → generated binding → JNI → Rust; contract and close markers passed, including `BOLT_CLOSE ... completed=true`. |
+| Android minified release/instrumentation | **FAILED / packaging** | Same job failed during minified instrumentation with `ClassNotFoundException: kotlin.jvm.internal.Lambda`. Debug semantic markers passed; this is a release harness/R8 packaging defect, not evidence of a Rust race, but it fails the adoption gate. |
+| Foreign-object ownership | **INFERRED / insufficient** | Generated patched Kotlin has counter/retain/release and structural check-then-act count 0; the Android close stress passed. However, no independent proof covers every receiver, synchronous, async, stream, callback and parameter-handle path, and upstream #732 remains open/unmerged. Do not promote this to a general safety guarantee. |
+| Future cancellation | **VERIFIED only for Apple probe; production parking limitation remains** | Apple cancellation/race/repeat probes pass and distinguish object close from future cancellation. The exercised wake-driven case is explicit, but Greenfield's external-event indefinite parking property is not a production wake contract. Adoption remains blocked without a demonstrated production wake mechanism. |
+| Stream backpressure | **BLOCKER** | Apple records bounded batch `100/100/0/hostBuffered=0` but also unbounded host backlog `100/0/20/80`; the generated BoltFFI stream remains unbounded. This is unacceptable for Greenfield media. |
+| Generated reproducibility/provenance | **VERIFIED** | Patches apply to exact v0.30.1 checkout and CI publishes patch/tree hashes; no generated output was hand-edited. The fixes are four local patches, including two correctness-critical local patches, with no released/merged upstream implementation. |
+| Material benefit over UniFFI | **UNKNOWN / not demonstrated** | Candidate establishes parity in selected probes only; no runtime, size, maintainability or capability advantage over the working UniFFI control was measured. |
+| Physical device | **UNKNOWN** | No physical Android/iOS device execution; `UNVERIFIED — PHYSICAL DEVICE REQUIRED`. |
+
+The Android failure is classified as **packaging/build configuration**, not a
+native semantic failure. It is a reproducible adoption blocker at the exact
+head. Combined with the unbounded host stream, open upstream ownership work,
+remaining path coverage and absent material-benefit measurement, further
+patching would maintain a local fork without demonstrated product benefit.

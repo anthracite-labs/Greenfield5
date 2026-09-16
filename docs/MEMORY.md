@@ -789,3 +789,40 @@ prints `BOLT_CLOSE` on debug *and* minified release, and to get an executed
 `T: Sendable` differential and the #778-shaped Sendable characterization; then
 re-triage the remaining acceptance items and finish the PR #19 handoff. Physical
 device results stay **UNVERIFIED — PHYSICAL DEVICE REQUIRED**.
+
+## 2026-09-16 — BoltFFI retest closed: DEFER (PR #19, exact head b1adb9d)
+
+**Done:** Re-fetched PR #19 and fast-forwarded the session branch to
+`b1adb9d33025424aa463bfd66061959baab71fc5`; observed run `35121808215` and
+control run `35121808672`. Closed the candidate investigation with **DEFER**;
+removed disposable `spikes/boltffi-retest/` and its workflow. UniFFI 0.32.1 and
+ADR-0007 remain the production control.
+
+**Verified:** Rust job `104881538499` passed. Apple job `104881538243` passed:
+Swift 6 unpatched RED exit 1, patched GREEN exit 0, real-Rust simulator suite
+19 tests passed, and patched future probes reported one free, zero violations,
+including cancellation/readiness/repeated-cancellation cases. Android job
+`104881538579` executed debug Kotlin → generated binding → JNI → Rust; contract,
+stream, cancellation and concurrent-close markers passed, including
+`BOLT_CLOSE ... completed=true`.
+
+**Failed / learned:** Android minified instrumentation failed as a packaging
+configuration defect: `ClassNotFoundException: kotlin.jvm.internal.Lambda`.
+Therefore the required genuinely minified native path is not passed. Apple also
+measured BoltFFI's unbounded host stream (`produced=100, consumed=20,
+hostBuffered=80`) alongside the bounded batch path; this is a media adoption
+blocker. Structural counter/retain checks and a bounded close stress are useful
+but do not close every foreign ownership path; upstream #732 is still open and
+unmerged. The class-returning Sendable characterization rejects non-Sendable
+`Leaf`, so no blanket Sendable claim is warranted. No material advantage over
+working UniFFI was measured, and physical-device evidence remains unavailable.
+
+**Dead ends:** The Android debug pass must not be generalized to release; the
+R8 failure was not silently treated as an FFI semantic pass. The Apple job log
+endpoint was unavailable after completion, so the exact marker values were
+read from check-run annotations instead. No second patch loop was started.
+
+**Next:** Keep UniFFI and execute the next bounded Issue #11 proof: real Rust
+MoQ-over-Iroh synthetic moving encoded media between Android and iOS, direct
+path plus relay fallback, using hello-iroh-ffi/iroh-ffi/moq/iroh-live proven
+pieces; then require physical-device evidence before capture or UI work.

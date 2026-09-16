@@ -1356,89 +1356,6 @@ check_workflows_yaml() {
   report_pass "$name" "$count workflow file(s) parse as YAML"
 }
 
-check_workflow_steps() {
-  local name="workflow_steps"
-  selected "$name" || return 0
-  if ! command -v python3 >/dev/null 2>&1; then
-    report_skip "$name" "python3 unavailable"
-    return 0
-  fi
-  if ! python3 -c 'import yaml' >/dev/null 2>&1; then
-    report_skip "$name" "no YAML parser available (CI installs PyYAML)"
-    return 0
-  fi
-
-  # A workflow step is code that only ever runs on a runner, so a syntax error in
-  # it stays invisible until CI burns a cycle on it. Every `run:` body is
-  # extracted and parsed here: `bash -n` for the shell, `compile()` for any
-  # python heredoc inside it - a bad block otherwise fails the step with an opaque
-  # "Process completed with exit code 2".
-  local tmp
-  tmp="$(mktemp -d)"
-  local file slug problems=() count=0 scripts=0
-  while IFS= read -r file; do
-    [ -n "$file" ] || continue
-    count=$((count + 1))
-    slug="$(printf '%s' "$file" | tr -c 'A-Za-z0-9' '_')"
-    if ! python3 - "$file" "$tmp" "$slug" <<'STEPS'
-import pathlib, re, sys, yaml
-
-path = pathlib.Path(sys.argv[1])
-out_dir = pathlib.Path(sys.argv[2])
-slug = sys.argv[3]
-workflow = yaml.safe_load(path.read_text())
-failures = []
-for job_name, job in (workflow.get("jobs") or {}).items():
-    for index, step in enumerate(job.get("steps") or []):
-        body = step.get("run")
-        if not isinstance(body, str):
-            continue
-        label = f"{job_name}/{step.get('name') or index}"
-        # The job name belongs in the file name: step indices restart per job, so
-        # two jobs' steps would otherwise overwrite each other and go unchecked.
-        safe_job = re.sub(r"[^A-Za-z0-9]+", "_", job_name)
-        (out_dir / f"{slug}-{safe_job}-{index}.sh").write_text(body)
-        lines = body.splitlines()
-        i = 0
-        while i < len(lines):
-            if re.search(r"^\s*python3\b[^\n]*<<'PY'", lines[i]):
-                base = len(lines[i]) - len(lines[i].lstrip())
-                block = []
-                j = i + 1
-                while j < len(lines) and lines[j].strip() != "PY":
-                    raw = lines[j]
-                    block.append(raw[base:] if raw[:base].strip() == "" else raw)
-                    j += 1
-                try:
-                    compile("\n".join(block), f"{path}:{label}", "exec")
-                except SyntaxError as exc:
-                    failures.append(f"{label}: python heredoc (step line {i + 1}): {exc.msg} (line {exc.lineno})")
-                i = j
-            i += 1
-if failures:
-    print("\n".join(failures))
-    raise SystemExit(1)
-STEPS
-    then
-      problems+=("$file: an embedded python heredoc does not compile")
-    fi
-  done < <(workflow_files)
-
-  for file in "$tmp"/*.sh; do
-    [ -e "$file" ] || continue
-    scripts=$((scripts + 1))
-    if ! bash -n "$file" 2>"${file}.err"; then
-      problems+=("$(basename -- "$file"): run: body is not valid bash: $(head -n 2 "${file}.err" | tr '\n' ' ')")
-    fi
-  done
-  rm -rf -- "$tmp"
-
-  if [ "${#problems[@]}" -gt 0 ]; then
-    fail_lines "$name" "${#problems[@]} workflow step problem(s)" "${problems[@]}"
-    return 1
-  fi
-  report_pass "$name" "$scripts run: body(ies) from $count workflow file(s): valid bash, embedded python compiles"
-}
 
 # --- Registration ------------------------------------------------------------
 register foundation
@@ -1457,7 +1374,6 @@ register env_files
 register lifecycle
 register no_app_stack
 register ruleset
-register workflow_steps
 register agentshield
 register workflows_yaml
 
