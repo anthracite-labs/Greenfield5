@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 
+# The Sendable probe is a nested crate; it is generated and type-checked on its
+# own and must never be packaged into the acceptance crate.
+exclude = ["sendable-probe"]
+
 [lib]
 name = "greenfield5_bolt_spike"
 crate-type = ["rlib", "cdylib", "staticlib"]

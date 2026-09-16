@@ -70,13 +70,47 @@ if ! "$SDKMANAGER" --list_installed 2>/dev/null | grep -Fq "$SYSTEM_IMAGE"; then
 fi
 "$SDKMANAGER" --list_installed | grep -E 'system-images|emulator|platform-tools' || true
 
-# --- 4. acceleration and host capability, before blaming the image ---
+# --- 4. acceleration, prepared and then *proved*, before blaming the image ---
+# GitHub's hosted Ubuntu runners expose /dev/kvm to the runner user only through
+# a udev rule; without it the emulator fails with "x86_64 emulation currently
+# requires hardware acceleration" and "This user doesn't have permissions to use
+# KVM (/dev/kvm)". The rule below is the established CI practice and is scoped to
+# this ephemeral runner (it is never part of the product tree, and it grants no
+# privilege beyond letting the ephemeral runner user open the node it already
+# owns a device for).
 echo "ANDROID_KVM_PRESENT=$([ -e /dev/kvm ] && echo yes || echo no)"
+ls -l /dev/kvm 2>&1 || true
+if [ -e /dev/kvm ] && [ ! -w /dev/kvm ]; then
+  echo "ANDROID_KVM_NOT_WRITABLE=yes (preparing udev rule)"
+  echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+    | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+  sudo udevadm control --reload-rules
+  sudo udevadm trigger --name-match=kvm
+fi
+echo "ANDROID_KVM_READABLE=$([ -r /dev/kvm ] && echo yes || echo no)"
+echo "ANDROID_KVM_WRITABLE=$([ -w /dev/kvm ] && echo yes || echo no)"
 ls -l /dev/kvm 2>&1 || true
 grep -c -E '(vmx|svm)' /proc/cpuinfo || true
 echo "ANDROID_NPROC=$(nproc)"
 free -m || true
-"$EMULATOR" -accel-check 2>&1 || true
+
+# Fail closed before an AVD is created or an emulator is started: an unusable
+# accelerator is an infrastructure failure, never a candidate result.
+if [ ! -e /dev/kvm ]; then
+  echo "ANDROID_ACCEL_UNUSABLE=no /dev/kvm node on this runner" >&2
+  exit 1
+fi
+if [ ! -r /dev/kvm ] || [ ! -w /dev/kvm ]; then
+  echo "ANDROID_ACCEL_UNUSABLE=/dev/kvm exists but $USER cannot read/write it" >&2
+  exit 1
+fi
+accel_report="$("$EMULATOR" -accel-check 2>&1 || true)"
+printf '%s\n' "$accel_report"
+if ! printf '%s\n' "$accel_report" | grep -qiE 'is installed and usable|accel: 0|KVM.*usable'; then
+  echo "ANDROID_ACCEL_UNUSABLE=emulator -accel-check did not report a usable accelerator" >&2
+  exit 1
+fi
+echo "ANDROID_ACCEL=usable"
 
 # --- 5. reuse a booted device when there is one, otherwise boot with a finite
 #        ceiling and a diagnosable failure ---

@@ -1,0 +1,355 @@
+# Patch 0004 - generated Swift async runtime: one owner for the raw future handle (LOCAL, offered upstream)
+#
+# Upstream base: boltffi v0.30.1, tag commit 2e6320a6d92cb591d22b908477f3a47da7ebc9bc.
+#   Re-checked 2026-09-16 against upstream main d5eba2e347a957a7fce67bb738ae37d985ba082b:
+#   `git diff 2e6320a6 origin/main -- boltffi_backend/templates/target/swift/` is
+#   empty, so this defect is both unreleased and unfixed upstream. PR #732 (the
+#   Kotlin/Java/C# close-race PR ported as patch 0002) does not touch this file.
+#   Upstream has already fixed one instance of this same defect class and named
+#   it: commit b01038ef35f50bd1512a99080d8541e9cfd4fa48 ("do not double-drive
+#   async poll Ready via return and callback"), an ancestor of v0.30.1 and of
+#   main. The owner/lifetime half of the class is what remains open.
+#
+# Defect (reproduced, not hypothesised). The generated Swift driver called
+#   `rust_future_free` from three places: the Ready path (after `complete`), the
+#   error path, and both branches of the cancellation handler - and it re-armed a
+#   poll by spawning an unstructured `Task { await Task.yield(); start() }`. Two
+#   concrete use-after-frees follow from that, and both are visible from the
+#   runtime's own source:
+#
+#   A. Queued re-poll after the free. `RustFuture::poll` parks the continuation
+#      and later the runtime wakes it with `RustFuturePoll::MaybeReady`
+#      (continuation.rs `wake()` -> `Policy::wake()`). Swift's `handle(1)` then
+#      scheduled `Task { await Task.yield(); start() }` - a queued re-poll that
+#      the caller's cancellation cannot cancel. If the caller's task is cancelled
+#      in that window, `onCancel` runs `state.finish()` -> `rust_future_cancel`
+#      -> `rust_future_free`, and the queued re-poll then calls `rust_future_poll`
+#      with a handle whose `Arc<RustFuture>` has already been consumed by
+#      `consume_future` (`Arc::from_raw` + drop). Every later borrow
+#      (`with_future` / `with_future_arc` = `Arc::from_raw` + `mem::forget`) is a
+#      use-after-free. This is the shape the real simulator suite exposed.
+#
+#   B. Free inside a native call. `RustFuture::poll` invokes the continuation
+#      callback synchronously - on the Ready path, on the cancelled path, and
+#      from `store_continuation` when it displaces a parked continuation - so the
+#      Ready branch of the old Swift driver ran `complete` *and* `free` while the
+#      runtime was still inside `poll` with a live `&Arc<RustFuture>`, and, in the
+#      displacement case, before `store_continuation` wrote the next continuation
+#      into that future (the window b01038ef's message describes). A free from
+#      inside a callback also drops the boxed user future while the runtime's
+#      `Mutex<FutureExecutionState>` may still be in use.
+#
+# Observational evidence: PR #19 run 35089590460 (head 6e0922f) and run
+#   35092248876 (head 5277148) both executed the real simulator suite against the
+#   real Rust library: the contract suite passed and printed
+#   `BOLT_PROOF version=0.1.0 sender=PASS viewer=PASS typed_errors=PASS
+#   layout=PASS`, then the run died with "Test crashed with signal segv before
+#   starting test execution" on `BoltOwnership.repeatedCancellation()`.
+#
+# What this change does. The handle gets exactly one owner,
+#   `BoltFFIFutureLifetime`, which holds it (in an immutable `Owner` box) plus the
+#   `@Sendable` free function, and issues the free once, from `deinit`:
+#
+#   * `deinit` runs exactly once (ARC), so repeated cancellation, a dropped
+#     re-poll and the error path can never double free or leak a free.
+#   * The free is *enqueued* onto the call's serial `DispatchQueue` rather than
+#     called inline, so it also cannot run inside a native call or inside a
+#     callback the runtime makes into this module.
+#   * Every poll and the cancel are issued on that same queue, and each queued
+#     block owns its issuer (the driver, which owns the lifetime). The handle can
+#     therefore not be released while a poll is in flight, and the last queued
+#     poll always runs before the free - which is exactly invariant A.
+#   * A re-poll triggered by a wake is queued instead of being run from inside the
+#     runtime's frame, and the unstructured `Task` is gone (it also escaped the
+#     caller's cancellation domain, which is why a cancellation could not stop
+#     it). Instead of a second overlapping poll, this side now has at most one
+#     poll in flight, so it never displaces the continuation the runtime parked
+#     for it - the one path where the runtime writes to a future after invoking a
+#     continuation.
+#   * The cancellation handler marks the native future cancelled (queued) and
+#     resumes the caller; it never frees while a poll, a callback or a queued
+#     re-poll can still dereference the handle.
+#
+# Correction to an earlier draft of this patch: enqueuing merely the *poll* (and
+#   freeing inline from the callback) is NOT sufficient - the wake path delivers
+#   `MaybeReady` on a native thread, so the driver's last release, and with it a
+#   deinit-time free, would have happened inside the runtime's callback frame.
+#   The free has to be deferred onto the same queue that issues the native calls,
+#   which is what this patch does, and the host probe asserts it (a free observed
+#   while a native call or callback is on the stack is recorded as a violation).
+#
+# Why not the other candidates:
+#   * another `canPoll()` check before re-polling is still check-then-act: the
+#     re-poll can be queued before the cancellation wins and run after it;
+#   * freeing in the cancellation handler after `rust_future_cancel` has the same
+#     ordering problem and additionally frees from a native thread;
+#   * a blocking lock (e.g. holding a lock across the native call or a
+#     read-write lock around the free) converts a memory-safety defect into a hang
+#     risk - UniFFI's Kotlin object template explicitly rejects that trade
+#     (`ObjectTemplate.kt`, "destroy inside a read/write lock is a hidden
+#     blocking hazard");
+#   * `Unmanaged.passRetained`-style single-owner shortcuts cannot cover a queued
+#     block that is still going to run, which is the defect.
+#
+# Acceptance answers, per the task's requirements for a non-upstream modification:
+#   1. Invariant violated - the handle had several independent disposers (Ready
+#      path, error path, both cancellation branches) while a poll could still be
+#      queued, and one of those disposers ran inside the runtime's own frame.
+#   2. Why this restores it - one ARC owner; every actor that can still reach the
+#      handle holds that owner (the poll driver, each queued poll block, the
+#      cancellation path); polls and the cancel are serialised; the free is
+#      enqueued behind them and runs once, from `deinit`.
+#   3. Test that fails if removed - `host/LifetimeProbe.swift`
+#      (`BoltAsyncLifetime` suite) drives the generated runtime against a model of
+#      the Rust contract (borrowed poll/cancel/complete, consuming free) and
+#      records "poll after free", "free inside a native call", "free inside a
+#      native callback", "double free" and the free count. It fails on the
+#      pre-0004 runtime (the Ready path frees inside the poll frame: deterministic)
+#      and passes with it. The Apple job runs that probe as its own RED/GREEN pair
+#      (`--exclude 0004`), and the real-Rust suite adds the empirical SIGSEGV.
+#   4. Generalization - every BoltFFI Swift consumer that cancels an async call
+#      has this window; the change is in the shared generator template, so it
+#      covers all of them, and Greenfield5's own session API is class-shaped and
+#      hits it directly.
+#   5. New assumption and its enforcement - (a) the free is ordered after every
+#      native call this side issues: enforced by the serial queue, asserted by the
+#      probe's in-native-call detector; (b) the runtime's wake path does not touch
+#      the `RustFuture` allocation after invoking a parked continuation
+#      (continuation.rs `wake()` -> `invoke_stored()` -> return, all scheduler
+#      state that is separately `Arc`-owned), so an enqueued free that racemakes
+#      the wake frame's tail unwind is safe; (c) the runtime tolerates a poll of a
+#      cancelled future (it short-circuits on `is_cancelled` and answers Ready) -
+#      asserted upstream by `async_cancellation.rs` and used here so that a
+#      stranded re-poll is harmless; (d) exactly-once delivery of a parked
+#      continuation is the runtime's own atomic state machine, and the probe
+#      asserts the retain balance from the foreign side (every retained driver is
+#      consumed exactly once).
+#   6. Maintenance - one file, two small internal classes; delete it as soon as
+#      upstream ships an equivalent lifetime discipline. Recorded upstream-ready,
+#      no upstream issue or PR filed from this task.
+#
+# Upstream test that would prevent regression: `boltffi_tests/tests/async_cancellation.rs`
+#   covers cancel / repeated cancel / free on unpolled, completed and cancelled
+#   futures, but never (i) a foreign runtime that re-polls after the free, nor
+#   (ii) a free invoked from inside the continuation callback. A test that parks a
+#   continuation, frees the handle from inside the Ready delivery, and then polls
+#   the same handle - plus a test that asserts a second `rust_future_poll` while
+#   one continuation is parked does not displace it into a foreign free - belongs
+#   next to `cancel_stops_further_polling`.
+#
+diff --git a/boltffi_backend/templates/target/swift/async.swift b/boltffi_backend/templates/target/swift/async.swift
+--- a/boltffi_backend/templates/target/swift/async.swift
++++ b/boltffi_backend/templates/target/swift/async.swift
+@@ -15,13 +15,8 @@
+         }
+     }
+ 
+-    let handle: RustFutureHandle?
+     private var continuationSlot: UInt64 = 0
+ 
+-    init(handle: RustFutureHandle?) {
+-        self.handle = handle
+-    }
+-
+     func install(_ continuation: Continuation) -> Bool {
+         let box = ContinuationBox(continuation)
+         let raw = UInt64(UInt(bitPattern: Unmanaged.passRetained(box).toOpaque()))
+@@ -61,40 +56,124 @@
+     }
+ }
+ 
++import Dispatch
++
++/// Owns the raw native future handle for exactly one async call, for as long as
++/// anything can still reach it.
++///
++/// The Rust runtime hands the foreign side one owned reference
++/// (`Arc::into_raw` in `rust_future_new`), and `rust_future_free` is the only
++/// call that consumes it: `rust_future_poll`, `rust_future_cancel` and
++/// `rust_future_complete` merely borrow it (`with_future`/`with_future_arc` do
++/// `Arc::from_raw` + `mem::forget`). Every borrow that starts after that free is
++/// a use-after-free, and a free issued from inside a native call is worse still,
++/// because the runtime is then still inside `RustFuture::poll` / `wake` /
++/// `store_continuation` with a live `&Arc<RustFuture>` and, on the displacement
++/// path, still writes the new continuation into the future after invoking the
++/// displaced one.
++///
++/// So the handle is not owned by "whoever finishes first". It has exactly one
++/// owner, every actor that can still dereference it holds that owner, and the
++/// free happens once, from `deinit`, on the same serial queue that issues every
++/// poll and cancel for this call - after all of them.
++private final class BoltFFIFutureLifetime: @unchecked Sendable {
++    /// The one owner of the owned reference: nothing else stores a copy of the
++    /// handle, and this is what the deferred free captures.
++    private final class Owner: @unchecked Sendable {
++        let handle: RustFutureHandle?
++        let freeHandle: @Sendable (RustFutureHandle?) -> Void
++
++        init(handle: RustFutureHandle?, freeHandle: @escaping @Sendable (RustFutureHandle?) -> Void) {
++            self.handle = handle
++            self.freeHandle = freeHandle
++        }
++    }
++
++    private let owner: Owner
++    private let queue: DispatchQueue
++
++    var handle: RustFutureHandle? { owner.handle }
++
++    init(handle: RustFutureHandle?, freeHandle: @escaping @Sendable (RustFutureHandle?) -> Void) {
++        self.owner = Owner(handle: handle, freeHandle: freeHandle)
++        self.queue = DispatchQueue(label: "boltffi.async.future")
++    }
++
++    /// Runs one native call on this call's serial queue.
++    ///
++    /// Serialising is what makes the ownership work: the block owns its issuer
++    /// (the poll driver or this lifetime), so the handle cannot be released while
++    /// that native call is in flight, and a re-poll queued from inside a callback
++    /// runs after the callback returns instead of inside the runtime's frame.
++    func perform(_ body: @escaping @Sendable () -> Void) {
++        queue.async(execute: body)
++    }
++
++    deinit {
++        // ARC guarantees exactly one deinit, so there is exactly one free, even
++        // under repeated cancellation and even when a queued re-poll is dropped.
++        // It is enqueued rather than called: a deinit can run on a native thread
++        // inside a callback, and the free must never execute inside a native call
++        // or a callback the runtime makes into this module.
++        let owner = self.owner
++        let queue = self.queue
++        queue.async { owner.freeHandle(owner.handle) }
++    }
++}
++
+ private final class BoltFFIAsyncPollDriver: @unchecked Sendable {
+-    let futureHandle: RustFutureHandle?
++    let lifetime: BoltFFIFutureLifetime
+     let poll: (RustFutureHandle?, UInt64, (@convention(c) (UInt64, Int8) -> Void)?) -> Int8
+     let ready: () -> Void
+     let canPoll: () -> Bool
+ 
+     init(
+-        futureHandle: RustFutureHandle?,
++        lifetime: BoltFFIFutureLifetime,
+         poll: @escaping (RustFutureHandle?, UInt64, (@convention(c) (UInt64, Int8) -> Void)?) -> Int8,
+         ready: @escaping () -> Void,
+         canPoll: @escaping () -> Bool
+     ) {
+-        self.futureHandle = futureHandle
++        self.lifetime = lifetime
+         self.poll = poll
+         self.ready = ready
+         self.canPoll = canPoll
+     }
+ 
++    /// Issues one native poll on the call's serial queue.
++    ///
++    /// The queued block owns the driver, the driver owns the lifetime, and the
++    /// block is released only after the native poll has returned. That single
++    /// fact is what the old runtime was missing: a poll can no longer overlap
++    /// another poll (so this side never displaces the continuation the runtime
++    /// parks for it), and the handle cannot be freed while a poll - or a re-poll
++    /// queued from inside a callback - is still going to run.
+     func start() {
+-        _ = poll(
+-            futureHandle,
+-            UInt64(UInt(bitPattern: Unmanaged.passRetained(self).toOpaque())),
+-            boltffiAsyncPollCallback
+-        )
++        lifetime.perform { [self] in
++            _ = poll(
++                lifetime.handle,
++                UInt64(UInt(bitPattern: Unmanaged.passRetained(self).toOpaque())),
++                boltffiAsyncPollCallback
++            )
++        }
+     }
+ 
+     func handle(_ result: Int8) {
+         if result == 0 {
+             ready()
+         } else if canPoll() {
+-            _Concurrency.Task { [self] in
+-                await _Concurrency.Task.yield()
+-                start()
+-            }
++            // A wake means "poll again": queue the poll instead of running it
++            // here, so this never re-enters the runtime from its own frame. The
++            // check above is an optimisation, not a safety property - the poll it
++            // queues is safe even if it races cancellation, because the handle is
++            // owned by the lifetime and is still alive.
++            start()
++        }
++    }
++
++    /// Marks the native future cancelled, on the same queue as the polls.
++    func cancel(_ cancelHandle: @escaping @Sendable (RustFutureHandle?) -> Void) {
++        lifetime.perform { [self] in
++            cancelHandle(lifetime.handle)
+         }
+     }
+ }
+@@ -110,7 +189,11 @@
+     free: @escaping @Sendable (RustFutureHandle?) -> Void,
+     complete: @escaping (RustFutureHandle?, UnsafeMutablePointer<FfiStatus>?) throws -> T
+ ) async throws -> T {
+-    let state = BoltFFIFutureState<T>(handle: futureHandle)
++    let state = BoltFFIFutureState<T>()
++    // One owner for the handle, created before the cancellation handler so that a
++    // task cancelled before the continuation is installed still reaches the
++    // native future - and still frees the handle exactly once.
++    let lifetime = BoltFFIFutureLifetime(handle: futureHandle, freeHandle: free)
+     return try await withTaskCancellationHandler {
+         try await withCheckedThrowingContinuation { continuation in
+             guard state.install(continuation) else {
+@@ -118,7 +201,7 @@
+                 return
+             }
+             let driver = BoltFFIAsyncPollDriver(
+-                futureHandle: futureHandle,
++                lifetime: lifetime,
+                 poll: poll,
+                 ready: {
+                     let finish = state.finish()
+@@ -127,8 +210,7 @@
+                     }
+                     var status = FfiStatus()
+                     do {
+-                        let value = try complete(futureHandle, &status)
+-                        free(futureHandle)
++                        let value = try complete(lifetime.handle, &status)
+                         switch finish {
+                         case .withContinuation(let continuation):
+                             if status.code == 0 {
+@@ -140,7 +222,6 @@
+                             break
+                         }
+                     } catch {
+-                        free(futureHandle)
+                         if case .withContinuation(let continuation) = finish {
+                             continuation.resume(throwing: error)
+                         }
+@@ -154,13 +235,17 @@
+         let finish = state.finish()
+         switch finish {
+         case .finished:
++            // Already finished (cancelled, or completed and resumed): a no-op.
++            // Repeated cancellation lands here too, and never frees anything.
+             break
+         case .withoutContinuation:
+-            cancel(state.handle)
+-            free(state.handle)
++            // Cancelled before a continuation was installed - including a task
++            // that was already cancelled when the call started. The native future
++            // must still observe the cancellation; the lifetime - not this
++            // handler - releases the handle, on its own queue.
++            lifetime.perform { cancel(lifetime.handle) }
+         case .withContinuation(let continuation):
+-            cancel(state.handle)
+-            free(state.handle)
++            lifetime.perform { cancel(lifetime.handle) }
+             continuation.resume(throwing: CancellationError())
+         }
+     }

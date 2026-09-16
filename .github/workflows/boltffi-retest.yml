@@ -358,7 +358,7 @@ jobs:
   candidate-apple:
     name: BoltFFI candidate Apple
     runs-on: macos-15
-    timeout-minutes: 75
+    timeout-minutes: 90
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -402,22 +402,72 @@ jobs:
           fi
           cp "$log" provenance-unpatched.txt
 
-      - name: RED assertion - the real project rejects the unpatched generated Swift
+      - name: RED assertion - Swift 6 rejects the unpatched generated Swift
         run: |
           set -euo pipefail
-          log=red-xcodebuild.log
+          log=red-typecheck.log
           set +e
-          bash spikes/boltffi-retest/scripts/apple-proof.sh red >"$log" 2>&1
+          bash spikes/boltffi-retest/scripts/swift-typecheck.sh spikes/boltffi-retest unpatched >"$log" 2>&1
           status=$?
           set -e
           tail -n 40 "$log"
-          if [ "$status" -ne 0 ]; then
-            msg="$(tail -n 25 "$log" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | tail -c 900)"
-            echo "::error title=BoltFFI Swift 6 RED not reproduced::${msg}"
-            exit "$status"
+          if [ "$status" -eq 0 ]; then
+            echo "::error title=BoltFFI Swift 6 RED not reproduced::the unpatched v0.30.1 generated Swift type-checked under -swift-version 6; the premise of patch 0001 must be re-researched."
+            exit 1
           fi
+          python3 - "$log" <<'PY'
+          import re, sys
+          lines = open(sys.argv[1], errors="replace").read().splitlines()
+          hits = [ln for ln in lines if re.search(r"sendable", ln, re.I)]
+          if len(hits) < 2:
+              print("::error title=BoltFFI Swift 6 RED was not the Sendable defect::the unpatched generated Swift failed to compile, but not with the non-Sendable diagnostics patch 0001 addresses.")
+              print("\\n".join(ln for ln in lines if "error:" in ln)[:900])
+              raise SystemExit(1)
+          body = "unpatched v0.30.1 rejected by -swift-version 6:\\n" + "\\n".join(hits[:6])
+          body = body.replace("%", "%25").replace("\\r", "%0D").replace("\\n", "%0A")[:900]
+          print("::notice title=BoltFFI Swift 6 RED (unpatched)::" + body)
+          PY
           mv spikes/boltffi-retest/generated spikes/boltffi-retest/generated-unpatched
-          mv spikes/boltffi-retest/red-build.log . || true
+
+      - name: Lifetime RED - the pre-0004 runtime frees the future too early
+        run: |
+          set -euo pipefail
+          log=lifetime-red.log
+          probe() {
+            set -euo pipefail
+            # Same generator, one fix removed: the Swift 6 compilation patch stays,
+            # the future-lifetime patch does not.
+            bash spikes/boltffi-retest/scripts/fetch-patched-boltffi.sh --out .boltffi --apply-only --exclude 0004
+            ( cd .boltffi && cargo build --release -p boltffi_cli )
+            ( cd spikes/boltffi-retest && "${CARGO_TARGET_DIR}/release/boltffi" -v pack apple --release --deny-skipped )
+            bash spikes/boltffi-retest/scripts/apple-proof.sh lifetime
+          }
+          set +e
+          probe >"$log" 2>&1
+          status=$?
+          set -e
+          tail -n 60 "$log"
+          if [ "$status" -eq 0 ]; then
+            echo "::error title=BoltFFI lifetime RED not reproduced::the pre-0004 runtime passed the lifetime probe, so the probe no longer covers the defect or patch 0004 has become redundant."
+            exit 1
+          fi
+          python3 - "$log" <<'PY'
+          import re, sys
+          text = open(sys.argv[1], errors="replace").read()
+          hits = [ln.strip() for ln in text.splitlines()
+                  if re.search(r"poll after free|double free|free inside a native|BOLT_LIFETIME", ln)]
+          if not any(
+              "poll after free" in ln or "double free" in ln or "free inside a native" in ln
+              for ln in hits
+          ):
+              print("::error title=BoltFFI lifetime RED failed for the wrong reason::the probe failed without recording a lifetime violation (build or harness problem).")
+              print("\\n".join(ln for ln in text.splitlines() if "error:" in ln)[:900])
+              raise SystemExit(1)
+          body = "pre-0004 generated runtime, model of the Rust future contract:\\n" + "\\n".join(hits[:12])
+          body = body.replace("%", "%25").replace("\\r", "%0D").replace("\\n", "%0A")[:900]
+          print("::notice title=BoltFFI lifetime RED (pre-0004)::" + body)
+          PY
+          rm -rf spikes/boltffi-retest/generated
 
       - name: Patched generator (GREEN)
         run: |
@@ -425,9 +475,13 @@ jobs:
           log=green-generation.log
           generate() {
             set -euo pipefail
+            echo "== environment =="
+            rustc --version || true
+            cargo --version || true
             bash spikes/boltffi-retest/scripts/fetch-patched-boltffi.sh --out .boltffi --apply-only
             ( cd .boltffi && cargo build --release -p boltffi_cli )
             cli="${CARGO_TARGET_DIR}/release/boltffi"
+            "$cli" --version
             ( cd spikes/boltffi-retest && "$cli" -v pack apple --release --deny-skipped )
           }
           set +e
@@ -443,20 +497,68 @@ jobs:
           cp "$log" provenance-patched.txt
           python3 - <<'PY'
           import hashlib, pathlib, sys
-          sendable = 0
-          generic = 0
-          for f in sorted(pathlib.Path("spikes/boltffi-retest/generated").rglob("*.swift")):
-              text = f.read_text()
-              sendable += text.count("@escaping @Sendable (RustFutureHandle?) -> Void")
-              generic += text.count("func boltffiAsyncCall<T: Sendable>(")
+
+          def emit(kind, title, body):
+              body = body.replace("%", "%25").replace("\\r", "%0D").replace("\\n", "%0A")
+              print(f"::{kind} title={title}::{body[:900]}")
+
+          root = pathlib.Path("spikes/boltffi-retest/generated")
+          files = sorted(root.rglob("*.swift"))
+          text = "\n".join(f.read_text() for f in files)
+          sendable = text.count("@escaping @Sendable (RustFutureHandle?) -> Void")
+          generic = text.count("func boltffiAsyncCall<T: Sendable>(")
+          for f in files:
               print("SWIFT_SHA256", f.name, hashlib.sha256(f.read_bytes()).hexdigest())
+          problems = []
           if sendable < 2:
-              sys.exit(f"GREEN assertion failed: {sendable} Sendable cancel/free signatures, expected at least 2")
+              problems.append(f"{sendable} @Sendable cancel/free signatures, expected at least 2")
           if generic < 1:
-              sys.exit("GREEN assertion failed: generated call site does not constrain the completion value to Sendable")
-          print("::notice title=BoltFFI GREEN generator::patched v0.30.1 generated Swift declares cancel/free as @escaping @Sendable (RustFutureHandle?) -> Void and constrains the completion value with T: Sendable.")
+              problems.append("generated call site does not constrain the completion value to Sendable")
+          if "BoltFFIFutureLifetime" not in text:
+              problems.append("generated runtime has no BoltFFIFutureLifetime owner (patch 0004 missing)")
+          free_sites = text.count("freeHandle(owner.handle)")
+          if free_sites != 1:
+              problems.append(f"{free_sites} freeHandle(owner.handle) call sites, expected exactly 1, in deinit")
+          for stray in ("free(futureHandle)", "free(state.handle)", "free(lifetime.handle)"):
+              if stray in text:
+                  problems.append(f"the generated runtime still frees the handle directly via {stray}")
+          for required in ("DispatchQueue(label: \"boltffi.async.future\")", "queue.async(execute: body)"):
+              if required not in text:
+                  problems.append(f"generated runtime is missing {required}")
+          if "deinit {" not in text:
+              problems.append("the lifetime object has no deinit, so nothing frees the handle")
+          if problems:
+              emit("error", "BoltFFI GREEN assertion failed", "; ".join(problems))
+              sys.exit(1)
+          emit("notice", "BoltFFI GREEN generator",
+               "patched v0.30.1 generated Swift: cancel/free are @escaping @Sendable, the completion value is "
+               "constrained with T: Sendable, and the raw future handle is owned by BoltFFIFutureLifetime, whose "
+               "single deinit performs the only free.")
           PY
           cp -R spikes/boltffi-retest/generated spikes/boltffi-retest/generated-patched
+
+      - name: Lifetime GREEN - the patched runtime keeps the future alive
+        run: |
+          set -euo pipefail
+          log=lifetime-green.log
+          set +e
+          bash spikes/boltffi-retest/scripts/apple-proof.sh lifetime >"$log" 2>&1
+          status=$?
+          set -e
+          tail -n 40 "$log"
+          if [ "$status" -ne 0 ]; then
+            msg="$(tail -n 25 "$log" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | tail -c 900)"
+            echo "::error title=BoltFFI lifetime GREEN failed::${msg}"
+            exit "$status"
+          fi
+          python3 - "$log" <<'PY'
+          import sys
+          text = open(sys.argv[1], errors="replace").read()
+          hits = [ln.strip() for ln in text.splitlines() if "BOLT_LIFETIME" in ln]
+          body = "patched runtime, same probe as the RED run:\\n" + "\\n".join(hits[:6])
+          body = body.replace("%", "%25").replace("\\r", "%0D").replace("\\n", "%0A")[:900]
+          print("::notice title=BoltFFI lifetime GREEN (patched)::" + body)
+          PY
 
       - name: 'Differential probe - is T: Sendable required? (non-gating)'
         continue-on-error: true
@@ -483,14 +585,30 @@ jobs:
               path.write_text(text)
           print("::notice title=BoltFFI differential::parameters-only variant prepared: cancel/free are @Sendable but the completion value is not constrained to Sendable.")
           PY
-          bash scripts/apple-proof.sh partial || true
+          cd - >/dev/null
+          set +e
+          bash spikes/boltffi-retest/scripts/swift-typecheck.sh spikes/boltffi-retest partial >differential.log 2>&1
+          status=$?
+          set -e
+          tail -n 20 differential.log
+          python3 - "$status" <<'PY'
+          import sys
+          status = int(sys.argv[1])
+          lines = open("differential.log", errors="replace").read().splitlines()
+          evidence = [ln for ln in lines if "error:" in ln][:6]
+          body = (f"cancel/free @Sendable WITHOUT T: Sendable -> swiftc exit {status}; "
+                  + ("the constraint is still required\n" if status != 0 else "the constraint is NOT required\n")
+                  + "\n".join(evidence))
+          body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[:900]
+          print("::notice title=BoltFFI differential (params only)::" + body)
+          PY
 
       - name: Restore the patched generation
         if: always()
         run: |
           set -euo pipefail
           cd spikes/boltffi-retest
-          # The apple pack writes generated/apple (+ generated/swift, if configured);
+          # The apple pack writes generated/apple (+ generated/swift for the Swift API);
           # the GREEN step copies that whole tree aside, so any Swift source counts.
           if ! find generated-patched -name '*.swift' -print -quit | grep -q .; then
             echo "::error title=BoltFFI generation missing::generated-patched holds no generated Swift, so the GREEN generation step must have failed; the native test run cannot proceed."
@@ -508,14 +626,69 @@ jobs:
           bash spikes/boltffi-retest/scripts/apple-proof.sh test >"$log" 2>&1
           status=$?
           set -e
-          tail -n 40 "$log"
+          tail -n 60 "$log"
           if [ "$status" -ne 0 ]; then
             msg="$(tail -n 25 "$log" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | tail -c 900)"
             echo "::error title=BoltFFI Apple native proof failed::${msg}"
-            errors="$(grep -E 'error:|XCTAssert|recorded an issue|failed|FAILED' "$log" | head -n 25 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | tail -c 900)"
+            errors="$(grep -E 'error:|XCTAssert|recorded an issue|failed|FAILED|BOLT_LIFETIME' "$log" | head -n 25 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | tail -c 900)"
             echo "::error title=BoltFFI Apple native proof errors::${errors}"
             exit "$status"
           fi
+          python3 - "$log" <<'PY'
+          import sys
+          text = open(sys.argv[1], errors="replace").read()
+          keep = [ln.strip() for ln in text.splitlines()
+                  if any(k in ln for k in ("BOLT_PROOF", "BOLT_ERR", "BOLT_BACKLOG", "BOLT_BOUNDED",
+                                           "BOLT_CANCEL", "BOLT_LIFETIME", "Executed ", "Test run with"))]
+          body = "patched candidate, real Rust, real simulator:\n" + "\n".join(keep[-14:])
+          body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[:900]
+          print("::notice title=BoltFFI Apple native result::" + body)
+          PY
+
+      - name: 'Sendable probe - class-returning async API (characterization, non-gating)'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          log=sendable-probe.log
+          probe() {
+            set -euo pipefail
+            cli="${CARGO_TARGET_DIR}/release/boltffi"
+            ( cd spikes/boltffi-retest/sendable-probe && "$cli" -v pack apple --release --deny-skipped )
+            bash spikes/boltffi-retest/scripts/swift-typecheck.sh spikes/boltffi-retest/sendable-probe class-returning
+          }
+          set +e
+          probe >"$log" 2>&1
+          status=$?
+          set -e
+          tail -n 30 "$log"
+          python3 - "$status" <<'PY'
+          import re, sys
+          status = int(sys.argv[1])
+          lines = open("sendable-probe.log", errors="replace").read().splitlines()
+
+          def emit(title, body):
+              body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[:900]
+              print(f"::notice title={title}::{body}")
+
+          generated = [ln for ln in lines if "SWIFT_TYPECHECK_FILE=" in ln]
+          if not generated:
+              tail = "\n".join(lines[-8:])
+              emit("BoltFFI Sendable probe: shape not offered at this pin",
+                   "the generator did not produce Swift for an async method returning an exported class "
+                   "(upstream main d5eba2e3 adds shared class handles as async *parameters*; a class result is "
+                   "a separate question):\n" + tail)
+              raise SystemExit(0)
+          sendable = [ln for ln in lines if re.search(r"sendable|non-conforming|does not conform", ln, re.I)]
+          errors = [ln for ln in lines if "error:" in ln]
+          if status == 0:
+              emit("BoltFFI Sendable probe: PASS",
+                   "the generated Swift for an async class-returning API type-checks under -swift-version 6; "
+                   "the T: Sendable constraint does not block this shape.")
+          else:
+              emit("BoltFFI Sendable probe: known #778 boundary",
+                   f"swiftc exit {status}; the class-returning async API does not compile under Swift 6:\n"
+                   + "\n".join((sendable or errors)[:6]))
+          PY
 
       - name: Upload candidate Apple evidence
         if: always()
@@ -525,12 +698,15 @@ jobs:
           path: |
             spikes/boltffi-retest/build.log
             spikes/boltffi-retest/test.log
-            red-build.log
-            spikes/boltffi-retest/partial-build.log
-            red-xcodebuild.log
-            xcode-test.log
+            spikes/boltffi-retest/typecheck-*.log
+            spikes/boltffi-retest/sendable-probe/typecheck-*.log
             red-generation.log
             green-generation.log
+            red-typecheck.log
+            lifetime-red.log
+            lifetime-green.log
+            differential.log
+            sendable-probe.log
             provenance-unpatched.txt
             provenance-patched.txt
           if-no-files-found: warn
@@ -540,22 +716,20 @@ jobs:
         if: always()
         run: |
           python3 - <<'PY'
-          import pathlib
+          import pathlib, re
           parts = []
-          for name in ("red-build.log", "partial-build.log", "build.log", "test.log",
-                       "red-xcodebuild.log", "xcode-test.log", "green-generation.log", "red-generation.log"):
-              path = pathlib.Path("spikes/boltffi-retest") / name
-              if not path.exists():
-                  path = pathlib.Path(name)
+          for name in ("lifetime-green.log", "spikes/boltffi-retest/test.log", "xcode-test.log",
+                       "red-typecheck.log", "lifetime-red.log", "green-generation.log",
+                       "red-generation.log", "differential.log", "sendable-probe.log",
+                       "spikes/boltffi-retest/typecheck-unpatched.log"):
+              path = pathlib.Path(name)
               if not path.exists():
                   parts.append(f"[{name}: MISSING]")
                   continue
               data = path.read_text(errors="replace")
               keep = [ln for ln in data.splitlines()
-                      if any(k in ln for k in ("error:", "BOLT_", "TEST SUCCEEDED", "TEST FAILED",
-                                               "Executed ", "Test run with", "Test Case",
-                                               "SWIFT_", "sendable", "Sendable"))]
-              parts.append(f"[{name}]\n" + "\n".join(keep[-30:]))
+                      if re.search(r"BOLT_|Executed [0-9]+ test|OK \(1 test\)|error:|VIOLATION|passed|failed|SWIFT_TYPECHECK|poll after free", ln, re.I)]
+              parts.append(f"[{name}]\n" + "\n".join(keep[-14:]))
           text = "\n".join(parts)[-2400:]
           text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
           print("::notice title=BoltFFI candidate Apple result::" + text)

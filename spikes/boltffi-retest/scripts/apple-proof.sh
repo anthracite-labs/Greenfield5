@@ -1,17 +1,22 @@
 #!/usr/bin/env bash
 # Apple native proof for the patched BoltFFI candidate.
 #
-# Modes (all integrate the *current* generated/ tree into a throwaway copy of
+# Modes (both integrate the *current* generated/ tree into a throwaway copy of
 # the real Greenfield5 Xcode project, so every mode compiles with the project's
 # own Swift 6 / iOS 16 settings and nothing is weakened):
 #
-#   red      bounded build that MUST fail, with the non-Sendable diagnostics
-#            that motivate patch 0001 (the RED half of the regression)
-#   partial  bounded build of the parameters-only variant; records whether
-#            `@Sendable` alone is enough, i.e. whether `T: Sendable` is required.
-#            Never fails the job: it exists to answer that question with a
-#            compiler, not with an opinion.
-#   test     bounded build + native test run + marker/assertion gate (default)
+#   test      (default) real Rust: contract, ownership, streams and the lifetime
+#             probe together - the acceptance run. Requires the Rust contract
+#             markers (BOLT_PROOF, BOLT_BACKLOG) in addition to the lifetime ones.
+#   lifetime  the lifetime probe alone, against the model of the Rust future
+#             contract (no native library behaviour needed). This is the RED/GREEN
+#             pair for patch 0004: the same test file, run against a generator
+#             with and without the fix.
+#
+# The Swift 6 compilation RED (unpatched generator) and the parameters-only
+# differential probe live in swift-typecheck.sh, which type-checks the generated
+# Swift directly - cheaper and more precise than a full xcodebuild, and it keeps
+# the failure attributable to the generator instead of to the app.
 #
 # Every xcodebuild invocation is bounded (PR #17 lesson), and every log stays on
 # disk so a wedge is diagnosable instead of silent.
@@ -19,9 +24,9 @@ set -euo pipefail
 
 MODE="${1:-test}"
 case "$MODE" in
-  red | partial | test) ;;
+  test | lifetime) ;;
   *)
-    echo "usage: apple-proof.sh [red|partial|test]" >&2
+    echo "usage: apple-proof.sh [test|lifetime]" >&2
     exit 2
     ;;
 esac
@@ -74,8 +79,14 @@ echo "APPLE_GENERATED_SWIFT_FILES=${#generated_sources[@]}"
 rm -f -- "${app}/Greenfield5Tests/BridgeTests.swift"
 {
   echo "@testable import Greenfield5"
-  cat host/Contract.swift
-} >"${app}/Greenfield5Tests/BoltContract.swift"
+  cat host/LifetimeProbe.swift
+} >"${app}/Greenfield5Tests/BoltLifetimeProbe.swift"
+if [ "$MODE" = "test" ]; then
+  {
+    echo "@testable import Greenfield5"
+    cat host/Contract.swift
+  } >"${app}/Greenfield5Tests/BoltContract.swift"
+fi
 
 simulator_udid="$(python3 - <<'PY'
 import json, subprocess
@@ -96,44 +107,6 @@ base=(xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5
 
 echo "---- generated public API surface ----"
 grep -hE '^(public|@_|extension)' "${generated_sources[@]}" | sort -u | head -n 200
-
-if [ "$MODE" = "red" ] || [ "$MODE" = "partial" ]; then
-  log="${MODE}-build.log"
-  set +e
-  ( cd -- "$APP_DIR" && python3 "$RUN_BOUNDED" 420 "${SPIKE_DIR}/${log}" "${base[@]}" build )
-  status=$?
-  set -e
-  echo "APPLE_${MODE}_BUILD_EXIT=${status}"
-  tail -n 40 "$log" || true
-  python3 - "${SPIKE_DIR}/${log}" "$status" "$MODE" <<'PY'
-import re, sys
-log, status, mode = sys.argv[1], int(sys.argv[2]), sys.argv[3]
-lines = open(log, errors="replace").read().splitlines()
-sendable = [ln for ln in lines if re.search(r"sendable", ln, re.I)]
-errors = [ln for ln in lines if "error:" in ln]
-def notice(title, body):
-    body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[:900]
-    print(f"::notice title={title}::{body}")
-if mode == "red":
-    if status == 0:
-        print("::error title=BoltFFI RED not reproduced::the unpatched v0.30.1 generated Swift built cleanly under Swift 6; the premise of patch 0001 must be re-researched.")
-        raise SystemExit(1)
-    if len(sendable) < 2:
-        print("::error title=BoltFFI RED did not fail on Sendable::the unpatched generated Swift failed to build, but not with the non-Sendable diagnostics patch 0001 addresses.")
-        print("\n".join(errors[:10]))
-        raise SystemExit(1)
-    notice("BoltFFI RED (Swift 6)", "unpatched v0.30.1 rejected by the real project:\n" + "\n".join(sendable[:6]))
-    raise SystemExit(0)
-# partial: evidence only, never fatal.
-notice(
-    "BoltFFI differential (params only)",
-    f"cancel/free @Sendable WITHOUT T: Sendable -> xcodebuild exit {status}; "
-    f"{len(sendable)} sendable-related line(s)\n" + "\n".join((sendable or errors)[:6]),
-)
-raise SystemExit(0)
-PY
-  exit $?
-fi
 
 set +e
 ( cd -- "$APP_DIR" && python3 "$RUN_BOUNDED" 420 "${SPIKE_DIR}/build.log" "${base[@]}" build )
@@ -164,8 +137,14 @@ if [ "$test_status" -ne 0 ]; then
 fi
 
 grep -q '\*\* TEST SUCCEEDED \*\*' test.log
-grep -q 'BOLT_PROOF version=0.1.0' test.log
-grep -q 'BOLT_BACKLOG' test.log
+grep -q 'BOLT_LIFETIME' test.log
+if [ "$MODE" = "test" ]; then
+  # The real-Rust acceptance markers. In lifetime mode the probe only needs the
+  # generated runtime, so these are asserted by the acceptance run instead.
+  grep -q 'BOLT_PROOF version=0.1.0' test.log
+  grep -q 'BOLT_BACKLOG' test.log
+  grep -E "BOLT_PROOF|BOLT_ERR|BOLT_BACKLOG|BOLT_BOUNDED|BOLT_CANCEL|BOLT_LIFETIME" test.log | tail -n 20 || true
+fi
 # XCTest reports "Executed N tests"; swift-testing reports "Test run with N
 # tests passed". Require one of the two counts, so "TEST SUCCEEDED" alone can
 # never be mistaken for "tests actually ran".

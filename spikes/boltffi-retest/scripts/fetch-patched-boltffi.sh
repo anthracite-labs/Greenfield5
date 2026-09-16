@@ -9,6 +9,9 @@
 #   --verify-only             hash the patches, no checkout
 #   --out DIR --apply-only    apply the patches to an existing checkout,
 #                             resetting any previous application first
+#   --exclude PREFIX          skip every patch whose file name starts with
+#                             PREFIX (repeatable). Used to build the RED runtime
+#                             for a single patch: same generator, one fix removed.
 #
 # Emits machine-readable provenance lines (BOLTFFI_BASE=, BOLTFFI_PATCH_SHA256=,
 # ...) on stdout so a CI step can publish them as evidence.
@@ -50,12 +53,14 @@ OUT_DIR=""
 VERIFY_ONLY=0
 SKIP_PATCHES=0
 APPLY_ONLY=0
+EXCLUDES=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --out) OUT_DIR="$2"; shift 2 ;;
     --verify-only) VERIFY_ONLY=1; shift ;;
     --skip-patches) SKIP_PATCHES=1; shift ;;
     --apply-only) APPLY_ONLY=1; shift ;;
+    --exclude) EXCLUDES+=("$2"); shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -74,7 +79,21 @@ echo "BOLTFFI_BASE_SHA=${BASE_SHA}"
 
 # --- 1. patch provenance: hash every tracked patch before applying anything ---
 shopt -s nullglob
-patches=("${PATCH_DIR}"/*.patch)
+patches=()
+for candidate in "${PATCH_DIR}"/*.patch; do
+  name="$(basename -- "$candidate")"
+  skip=0
+  for exclude in ${EXCLUDES[@]+"${EXCLUDES[@]}"}; do
+    case "$name" in
+      "$exclude"*) skip=1 ;;
+    esac
+  done
+  if [ "$skip" -eq 1 ]; then
+    echo "BOLTFFI_EXCLUDED_PATCH=${name}"
+    continue
+  fi
+  patches+=("$candidate")
+done
 if [ "${#patches[@]}" -eq 0 ]; then
   echo "no patches found under ${PATCH_DIR}" >&2
   exit 1
