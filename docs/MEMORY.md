@@ -926,3 +926,22 @@ the next exact-head run. Lesson: for a log-parsing change, a green job is not
 evidence that the parser matched - the notice's own output is the assertion,
 and an unrecognised shape must leave the finding OPEN rather than be declared
 resolved.
+
+**Correction 2 (F3 pinned to the authoritative fixture):** The task owner
+supplied the verbatim raw lines of Stack run `35082423424` / iOS job
+`104749318038`, which is the only accepted F3 fixture. Swift Testing's
+xcodebuild report for this project is lowercase and glyph-free:
+`Testing started`, `Test suite 'BridgeTests' started on 'Clone 1 of iPad (10th
+generation) - Greenfield5 (36604)'`, then one
+`Test case 'BridgeTests/coreVersionIsExact()' passed on '<same device>' (0.000
+seconds)` per case (4 `AppNavigationTests` + 7 `BridgeTests`), ending in
+`** TEST SUCCEEDED **`. There is deliberately NO `Executed N tests` line in this
+output - that counter is the XCTest runner's and Swift Testing never increments
+it - so the notice now counts verified `Test case ... passed` lines and reports
+`executed: N test cases (P passed, F failed)`, keeping the TEST SUCCEEDED
+requirement and still warning `NOT EVIDENCE` when no case line or XCTest tally
+exists. Two earlier shapes were tried and discarded because they were observed
+in *other* tooling, not this job: the glyph summary `✔ Test run with N tests
+passed ...` (BoltFFI-spike annotations) and a quoted-display-name variant. A
+parser that recognises the wrong decoration silently keeps F3 open - the
+notice's own output, not the job's green status, is what proves the fix.

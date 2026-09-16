@@ -77,32 +77,37 @@ that **extracts the heredoc from the workflow file itself** (no re-implemented
 stand-in) and runs it against fixture logs built from verbatim CI lines.
 
 Fixture grounding: the GitHub job-log blob host
-(`productionresultssa*.blob.core.windows.net`) is unreachable from this sandbox
-(SSL_ERROR_SYSCALL, reproduced twice), so the observable CI channel is
-check-run annotations. Verbatim shapes captured from this repository's CI:
+(`productionresultssa*.blob.core.windows.net`) is unreachable from this sandbox,
+so the raw log of run `35082423424` / job `104749318038` was supplied by the task
+owner and is the authoritative fixture. Its verbatim shape is:
 
 ```
-✔ Test run with 19 tests passed after 1.674 seconds.        ← U+2714, pass summary
-✘ Test run with 8 tests failed after 2.943 seconds with 2 issues.   ← U+2718, fail summary
-✘ Test completionInsideThePollFrameNeverFreesTheFuture() failed after 0.112 seconds with 1 issue.
-	 Executed 0 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds   ← XCTest counter; counts XCTest cases only
+Testing started
+Test suite 'BridgeTests' started on 'Clone 1 of iPad (10th generation) - Greenfield5 (36604)'
+Test case 'BridgeTests/coreVersionIsExact()' passed on 'Clone 1 of iPad (10th generation) - Greenfield5 (36604)' (0.000 seconds)   ← 11 of these
 ** TEST SUCCEEDED **
 ```
+
+There is no `Executed N tests` line in this output - that counter belongs to the
+XCTest runner and is simply absent for Swift Testing - so the notice must count
+the verified `Test case ... passed` lines instead of claiming a summary that
+Xcode never emitted. (The glyph-decorated `✔ Test run with 19 tests passed ...`
+shape seen in this repository's BoltFFI-spike annotations is a different tool's
+decoration and is deliberately not treated as this job's format.)
 
 ## Implementation reality check (F3, recorded during execution)
 
 The first exact-head run of the F3 change (`1d8f73a`, Stack run `35129931987`,
 job `104908125375`) proved the *shipped* parser still found no count: the real
-iOS log carries `** TEST SUCCEEDED **` and none of the Swift Testing summary,
-glyph-prefixed case lines or XCTest counter shapes the change recognised. The
-log-artifact blob host stays unreachable from this sandbox, so the actual line
-grammar must be reproduced by CI, not guessed: the parser was widened to the
-documented Swift Testing decoration variants (optional status glyph, optional
-ANSI colour, quoted display names vs bare `name()` identifiers), all negative
-fixtures still warn, and the next exact-head run is the acceptance evidence.
-F3 stays open until a run reports a count derived from real passing test-case
-lines. The verbatim raw lines of run `35082423424` / job `104749318038` remain
-the authoritative fixture and were requested from the task owner.
+iOS log carries `** TEST SUCCEEDED **` and none of the shapes that version
+recognised. The log blob host stays unreachable from the sandbox, so the
+authoritative raw lines were requested from the task owner rather than guessed;
+they are reproduced above and are the only fixture F3 is accepted against. The
+parser is now pinned to that grammar - lowercase `Test case '<Suite>/<name>()'
+passed on '<device>' (<n> seconds)` with the identifier counted once, plus the
+`** TEST SUCCEEDED **` requirement, and no fabricated `Executed N tests` claim.
+Exact-head CI is still the acceptance evidence: the notice's own annotation must
+report the count.
 
 ## Phases (each names its verification)
 
