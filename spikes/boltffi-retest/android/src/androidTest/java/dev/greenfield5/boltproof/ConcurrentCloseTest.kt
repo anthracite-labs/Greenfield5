@@ -63,7 +63,19 @@ class ConcurrentCloseTest {
             check(!worker.isAlive) { "native call did not drain" }
         }
 
-        // 2. asynchronous call in flight racing close(); close is idempotent
+        // 2. asynchronous call in flight racing close(); close is idempotent.
+        //
+        // The call is a *bounded* wait so that it can still complete after close().
+        // A call that could only be woken by `release()` cannot: the contract rejects
+        // every call on a closed object, so the wake would never be delivered and the
+        // call would stay parked forever - which is what run 35118131437 measured in
+        // both the patched and the unpatched tree ("async call did not drain" at
+        // ConcurrentCloseTest.kt:120), i.e. the assertion was unevaluable rather than
+        // failed. That is a real property of the contract and it is recorded in the
+        // ownership audit: closing an object while one of its own futures is parked
+        // leaves that future parked (and its retain keeps the object alive), because
+        // close() defers the free but does not cancel or complete in-flight futures.
+        // The post-close `release()` below is kept as the rejection assertion.
         repeat(200) {
             val probe = AsyncProbe()
             val failed = AtomicReference<Throwable?>()
@@ -74,7 +86,7 @@ class ConcurrentCloseTest {
                 // classpath: stdlib startCoroutine runs the block on this thread
                 // until it suspends, then resumes it on whichever thread the
                 // native completion arrives on - the same shape as a real caller.
-                val call: suspend () -> UInt = { probe.waitValue(3u, false) }
+                val call: suspend () -> UInt = { probe.waitValueBounded(3u, false, 150u) }
                 call.startCoroutine(object : Continuation<UInt> {
                     override val context: CoroutineContext = EmptyCoroutineContext
                     override fun resumeWith(result: Result<UInt>) {

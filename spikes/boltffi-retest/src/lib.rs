@@ -372,47 +372,101 @@ use std::pin::Pin;
 use std::future::Future;
 
 /// Test fixture: exactly one outstanding wait per instance; not a production executor.
-pub struct AsyncProbe {
+///
+/// The state is behind an `Arc` so the bounded wait can wake itself from a timer
+/// thread without holding a borrow of the receiver - see `wait_value_bounded`.
+struct ProbeShared {
     released: AtomicBool,
+    /// Latched by the bounded wait's timer. The fixture allows one outstanding wait
+    /// per instance, so a per-probe latch is unambiguous.
+    deadline_hit: AtomicBool,
     active: AtomicU32,
     waker: Mutex<Option<Waker>>,
 }
-struct WaitGuard<'a>(&'a AsyncProbe);
-impl Drop for WaitGuard<'_> {
+
+pub struct AsyncProbe {
+    shared: Arc<ProbeShared>,
+}
+
+struct WaitGuard(Arc<ProbeShared>);
+impl Drop for WaitGuard {
     fn drop(&mut self) {
         self.0.waker.lock().expect("probe waker lock").take();
         self.0.active.fetch_sub(1, Ordering::SeqCst);
     }
 }
-struct Gate<'a>(&'a AsyncProbe);
-impl Future for Gate<'_> {
+
+struct Gate(Arc<ProbeShared>);
+impl Future for Gate {
     type Output = ();
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
         let mut waker = self.0.waker.lock().expect("probe waker lock");
-        if self.0.released.load(Ordering::SeqCst) { Poll::Ready(()) }
-        else { *waker = Some(cx.waker().clone()); Poll::Pending }
+        if self.0.released.load(Ordering::SeqCst) || self.0.deadline_hit.load(Ordering::SeqCst) {
+            Poll::Ready(())
+        } else {
+            *waker = Some(cx.waker().clone());
+            Poll::Pending
+        }
     }
 }
+
 #[boltffi::export]
 impl AsyncProbe {
     pub fn new() -> Self {
-        Self { released: AtomicBool::new(false), active: AtomicU32::new(0), waker: Mutex::new(None) }
+        Self {
+            shared: Arc::new(ProbeShared {
+                released: AtomicBool::new(false),
+                deadline_hit: AtomicBool::new(false),
+                active: AtomicU32::new(0),
+                waker: Mutex::new(None),
+            }),
+        }
     }
-    pub fn active(&self) -> u32 { self.active.load(Ordering::SeqCst) }
+    pub fn active(&self) -> u32 { self.shared.active.load(Ordering::SeqCst) }
     pub fn release(&self) {
-        self.released.store(true, Ordering::SeqCst);
-        let waker = self.waker.lock().expect("probe waker lock").take();
+        self.shared.released.store(true, Ordering::SeqCst);
+        let waker = self.shared.waker.lock().expect("probe waker lock").take();
         if let Some(waker) = waker { waker.wake(); }
     }
     pub async fn wait_value(&self, sequence: u32, fail: bool) -> Result<u32, BridgeError> {
-        self.active.fetch_add(1, Ordering::SeqCst);
-        let _guard = WaitGuard(self);
-        Gate(self).await;
+        self.shared.active.fetch_add(1, Ordering::SeqCst);
+        let _guard = WaitGuard(self.shared.clone());
+        Gate(self.shared.clone()).await;
         if fail { Err(BridgeError::SessionEnded) } else { Ok(sequence) }
     }
+
+    /// A wait that also completes on its own after `timeout_ms`.
+    ///
+    /// `ConcurrentCloseTest` needs this, and the reason is a finding, not a
+    /// convenience. `wait_value` can only be woken by `release()`, and the ownership
+    /// contract *rejects every call on a closed object* - so a call parked when
+    /// `close()` runs could never be woken, on the patched build or on the
+    /// unpatched one. The drain assertion was therefore unevaluable (`async call did
+    /// not drain`, run 35118131437, in both trees) instead of telling us anything
+    /// about memory safety. With a deadline the call is still parked when `close()`
+    /// runs and can still complete afterwards, which is the property the test means
+    /// to assert - and on the unpatched build the same sequence completes against a
+    /// receiver that `close()` already freed.
+    pub async fn wait_value_bounded(&self, sequence: u32, fail: bool, timeout_ms: u32) -> Result<u32, BridgeError> {
+        // Ownership only: the future holds `Arc` clones, so nothing borrowed from the
+        // receiver is held across the await and the timer thread needs no lifetime.
+        let shared = self.shared.clone();
+        shared.active.fetch_add(1, Ordering::SeqCst);
+        let _guard = WaitGuard(shared.clone());
+        let timer = shared.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(u64::from(timeout_ms.min(5_000))));
+            timer.deadline_hit.store(true, Ordering::SeqCst);
+            let waker = timer.waker.lock().expect("probe waker lock").take();
+            if let Some(waker) = waker { waker.wake(); }
+        });
+        Gate(shared).await;
+        if fail { Err(BridgeError::SessionEnded) } else { Ok(sequence) }
+    }
+
     pub fn hold(&self, milliseconds: u32) -> u32 {
-        self.active.fetch_add(1, Ordering::SeqCst);
-        let _guard = WaitGuard(self);
+        self.shared.active.fetch_add(1, Ordering::SeqCst);
+        let _guard = WaitGuard(self.shared.clone());
         std::thread::sleep(std::time::Duration::from_millis(u64::from(milliseconds.min(100))));
         42
     }
