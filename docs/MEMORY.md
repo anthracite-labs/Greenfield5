@@ -862,3 +862,35 @@ between Android and iOS, direct path plus relay fallback, before capture or UI.
 `b310d74b4833322a4bb10903897ec3aff6776d0c`; therefore run `35125696743` is not
 final-head evidence for the current commit. The current commit requires its own
 replacement run before merge recommendation.
+
+
+## 2026-09-16 — CI trigger fix: stop redundant Stack runs on PR follow-ups
+
+**Problem:** GitHub Actions history showed PR #21 repeatedly launching the expensive
+`Stack` workflow for every synchronize event. Stack runs #64–#67 mapped one-for-one
+to successive PR heads; the final transition `6543d67b5...b869fa596` changed only
+`docs/MEMORY.md`, yet Stack #67 still launched because `pull_request.paths` was
+evaluated against the PR's cumulative stack-touching diff.
+
+**Change:** Issue #22 / PR #23 changes only `.github/workflows/stack.yml` trigger
+semantics. Stack is path-filtered on `push` for every branch plus
+`workflow_dispatch`; the automatic `pull_request` trigger and `branches: [main]`
+restriction are removed. All Rust/Android/iOS jobs, read-only permissions, pinned
+actions, and `cancel-in-progress` concurrency remain unchanged.
+
+**Verified so far:** Exact functional head
+`6b75240bc3ae28b55bb5f945a84dea104eb19a07` created Stack run `35138425689`
+with event=`push`, proving a stack.yml-changing branch push still starts Stack.
+Opening PR #23 created verify run `35138485631` with event=`pull_request` and
+created no Stack pull-request run; both required verify jobs passed. Rust core in
+the one expected Stack run passed while Android/iOS were still executing when this
+entry was written.
+
+**Security review:** Workflow permissions remain `contents: read`; no secrets,
+write permission, `pull_request_target`, dependency/action-pin changes, or remote
+execution were introduced.
+
+**Next evidence:** This MEMORY-only commit is intentionally the live regression
+probe. It must create PR `verify` but no new Stack run. The existing Stack run on
+the functional head remains the application-stack validation because the final
+tree differs only in this documentation entry.
