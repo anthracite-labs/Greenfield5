@@ -82,7 +82,7 @@ Exit condition: an accepted stack ADR.
 - [x] Add stack-specific lint/test/build jobs to CI. The foundation gate keeps
       running alongside them; it is never replaced.
       (Done: `.github/workflows/stack.yml`, non-required until stabilized —
-      ADR-0006 follow-up 8.)
+      ADR-0006 follow-up 5.)
 - [x] Add codemaps under [codemaps/](codemaps/README.md) as code areas appear.
       (Started: [codemaps/core-session.md](codemaps/core-session.md).)
 

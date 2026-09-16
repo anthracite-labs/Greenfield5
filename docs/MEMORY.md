@@ -863,34 +863,141 @@ between Android and iOS, direct path plus relay fallback, before capture or UI.
 final-head evidence for the current commit. The current commit requires its own
 replacement run before merge recommendation.
 
+## 2026-09-16 — Audit-findings cleanup (F1–F4) on the session branch
+
+**Done:** Implemented exactly the four verified audit findings that were still
+true on main `5a64ee9e`; no other defect hunting, no architecture change.
+F1 `docs/codemaps/core-session.md` re-synced to the code and ADR-0007 (UniFFI
+0.32.1 + thiserror deps and `core/Cargo.lock`; the bridge is production, not
+"future"; `uniffi_api.rs` / `uniffi.toml` / `uniffi-bindgen.rs` listed; capture
+commands documented as deliberately not role-guarded; `CoreError` variants
+renamed to `Unknown{Role,Mode,Command}Code` + `Session`; 40 tests;
+crate-level `allow(unsafe_code)` documented as ADR-0007's boundary model).
+F2 corrected eight demonstrably stale statements: `docs/DOMAIN.md` ("product
+undefined" → defined, with the real ADR-0006 follow-up 8 attribution),
+`README.md` repo map (stack CI line omitted iOS), `docs/ROADMAP.md` follow-up
+8 → 5, `apps/android/scripts/generate-uniffi-bindings.sh` ("Called from CI" →
+inlined by the workflow), `apps/ios/.../GreenfieldRustBridge.swift` (stub file
+name), and the "until the bridge lands / native-to-Rust bridge lands" comments
+in `MainActivity.kt`, `ui/AppNavigation.kt`, `AppNavigation.swift`,
+`Greenfield5App.swift`. F3 taught the iOS success-notice parser Swift Testing
+output (see Learned). F4 removed the two dead R8 keeps
+(`uniffi.greenfield5_core.**`, `dev.greenfield5.app.GreenfieldRustBridge`) whose
+real counterparts are already covered by the `uniffi.greenfield5.**` and
+`dev.greenfield5.app.bridge.**` wildcards.
+
+**Verified:** Parser change developed RED→GREEN with a probe that extracts the
+notice heredoc out of `stack.yml` itself: at HEAD the Swift Testing fixture
+reproduced the observed CI string `WARNING: no "Executed N tests" count found -
+NOT EVIDENCE`; after the patch the same fixture reports
+`executed: 11 tests (passed) [source: swift-testing summary]`, while the
+no-signal fixture still warns, the legacy `Executed 0 tests` fixture is labelled
+as *not* evidence, and a failing Swift Testing summary is never reported as
+success. Local gates after the change: `git diff --check` clean,
+`bash scripts/verify.sh` PASS 16/0/2 (unchanged skips), `bash
+scripts/selftest.sh` PASS 128/128, shellcheck clean over 7 tracked scripts,
+28 embedded workflow Python heredocs compile and 32 `run:` blocks pass `bash
+-n`. Exact-head Stack CI is the execution evidence for the Android R8 release
+path and the iOS test job; local sandbox has no cargo/java/swift.
+
+**Learned:** This repository's Swift Testing suites print
+`✔ Test run with N tests passed after X seconds.` (U+2714) or
+`✘ Test run with N tests failed ...` (U+2718), and the legacy XCTest counter
+`Executed 0 tests, with 0 failures ...` in the same log counts XCTest cases
+only — treating a zero XCTest tally as "no tests ran" is wrong while Swift
+Testing cases exist (Stack run 35082423424 job 104749318038 executed 4
+AppNavigationTests + 7 BridgeTests). A generated UniFFI package name is fixed by
+`core/uniffi.toml` (`uniffi.greenfield5`) and asserted in the Android job, so
+keep rules for the ignored default name (`uniffi.greenfield5_core`) can never
+match. The workflow header's stack-CI stabilization follow-up is ADR-0006
+follow-up 5 (its follow-up 8 is the `docs/DOMAIN.md` vocabulary task, now
+noted in DOMAIN.md itself).
+
+**Correction (same day, after the first exact-head run):** `1d8f73a`'s Stack run
+`35129931987` (iOS job `104908125375`) came back green but its success notice
+still reported no count, because the real iOS log contains only
+`** TEST SUCCEEDED **` - no Swift Testing summary line, no glyph-prefixed case
+lines, no XCTest counter. The first parser version was therefore recognising
+the *BoltFFI-spike* decorations, not this job's actual ones; the notice is
+widened to the documented Swift Testing variants (optional glyph, optional ANSI
+colour, quoted display names vs bare `name()`), verified locally against six
+fixtures including a start-line-only log that must still warn, and re-proved on
+the next exact-head run. Lesson: for a log-parsing change, a green job is not
+evidence that the parser matched - the notice's own output is the assertion,
+and an unrecognised shape must leave the finding OPEN rather than be declared
+resolved.
+
+**Correction 2 (F3 pinned to the authoritative fixture):** The task owner
+supplied the verbatim raw lines of Stack run `35082423424` / iOS job
+`104749318038`, which is the only accepted F3 fixture. Swift Testing's
+xcodebuild report for this project is lowercase and glyph-free:
+`Testing started`, `Test suite 'BridgeTests' started on 'Clone 1 of iPad (10th
+generation) - Greenfield5 (36604)'`, then one
+`Test case 'BridgeTests/coreVersionIsExact()' passed on '<same device>' (0.000
+seconds)` per case (4 `AppNavigationTests` + 7 `BridgeTests`), ending in
+`** TEST SUCCEEDED **`. There is deliberately NO `Executed N tests` line in this
+output - that counter is the XCTest runner's and Swift Testing never increments
+it - so the notice now counts verified `Test case ... passed` lines and reports
+`executed: N test cases (P passed, F failed)`, keeping the TEST SUCCEEDED
+requirement and still warning `NOT EVIDENCE` when no case line or XCTest tally
+exists. Two earlier shapes were tried and discarded because they were observed
+in *other* tooling, not this job: the glyph summary `✔ Test run with N tests
+passed ...` (BoltFFI-spike annotations) and a quoted-display-name variant. A
+parser that recognises the wrong decoration silently keeps F3 open - the
+notice's own output, not the job's green status, is what proves the fix.
+
+**Final evidence (F1-F4 cleanup, session branch `arena/01a0ab42-greenfield5`):**
+Head `6543d67b51c22289ddeec31fa79506e31d2cd30a`. Exact-head `Stack` run
+`35134401021` succeeded with Rust core job `104923027876` (Format, Lint, Test),
+Android shell job `104923027742` (UniFFI generation, unit tests + debug assembly,
+and "Release assembly (proves R8 keep rules)" after the dead keeps were removed),
+and iOS shell job `104923027959` (generated Swift + XCFramework, app build, "Run
+iOS tests"). Exact-head `verify` run `35134400912` succeeded (Foundation gate +
+Independent checks). The iOS success notice at that head published exactly
+`executed: 11 test cases (11 passed, 0 failed) [source: swift-testing case lines]`
+with the two `Test suite ... started on` lines, the per-case `Test case '...'
+passed on '...'` lines and `** TEST SUCCEEDED **` - i.e. 4 AppNavigationTests +
+7 BridgeTests counted from the real case lines, F3 verified in CI and not merely
+in the local fixture. Earlier heads are recorded for honesty, not as evidence:
+`1d8f73a` Stack `35129931987` was green but its notice still warned (F3 stayed
+open), and `5a3324d` Stack `35131864404` was green with the widened-but-wrong
+grammar. Local gates on the final tree: `git diff --check` clean, `verify.sh`
+PASS 16/0/2, `selftest.sh` PASS 128/128, shellcheck clean, 32 `run:` blocks pass
+`bash -n`, 28 embedded Python heredocs compile. Untouched by design: `docs/
+decisions/**`, `core/Cargo.toml`, `core/Cargo.lock`, `rust-toolchain.toml`,
+`core/uniffi.toml`, Gradle/AGP files, generated bindings and `core/src/**` show
+an empty diff against `main`.
 
 ## 2026-09-16 — CI trigger fix: stop redundant Stack runs on PR follow-ups
 
 **Problem:** GitHub Actions history showed PR #21 repeatedly launching the expensive
 `Stack` workflow for every synchronize event. Stack runs #64–#67 mapped one-for-one
-to successive PR heads; the final transition `6543d67b5...b869fa596` changed only
-`docs/MEMORY.md`, yet Stack #67 still launched because `pull_request.paths` was
-evaluated against the PR's cumulative stack-touching diff.
+to successive PR heads; `6543d67b5...b869fa596` changed only `docs/MEMORY.md`,
+yet Stack #67 still launched because `pull_request.paths` was evaluated against
+the PR's cumulative stack-touching diff.
 
-**Change:** Issue #22 / PR #23 changes only `.github/workflows/stack.yml` trigger
-semantics. Stack is path-filtered on `push` for every branch plus
-`workflow_dispatch`; the automatic `pull_request` trigger and `branches: [main]`
-restriction are removed. All Rust/Android/iOS jobs, read-only permissions, pinned
+**Change:** Issue #22 / PR #23 changes only Stack trigger semantics on top of the
+merged PR #21 tree. `.github/workflows/stack.yml` remains path-filtered but is now
+automatic on `push` for every branch plus `workflow_dispatch`; the automatic
+`pull_request` trigger and `branches: [main]` restriction are removed. PR #21's
+proven Swift Testing summary parser and ADR follow-up header corrections are
+preserved unchanged. All Rust/Android/iOS jobs, read-only permissions, pinned
 actions, and `cancel-in-progress` concurrency remain unchanged.
 
-**Verified so far:** Exact functional head
+**Verified:** Functional workflow head
 `6b75240bc3ae28b55bb5f945a84dea104eb19a07` created Stack run `35138425689`
-with event=`push`, proving a stack.yml-changing branch push still starts Stack.
-Opening PR #23 created verify run `35138485631` with event=`pull_request` and
-created no Stack pull-request run; both required verify jobs passed. Rust core in
-the one expected Stack run passed while Android/iOS were still executing when this
-entry was written.
+with event=`push`; Rust, Android, and iOS all passed. Opening PR #23 created
+verify run `35138485631` with event=`pull_request` and no Stack PR run; both
+required verify jobs passed. A later docs-only MEMORY commit advanced the branch
+to `2a8cf5451a1bd8cfe2b81d289a34ca6acdde4fc1` and created verify run
+`35138769661` (passed) but **no new Stack run**, directly proving the queue-churn
+regression is fixed.
+
+**Integration:** PR #21 merged first at
+`8fc17bb3c5131247de0c36f3f06ecda38477ce5f`, making PR #23 conflict. PR #23 was
+then reconciled with a normal merge commit (no force-push), taking merged main as
+the base tree and preserving both PR #21's F3 parser and PR #23's trigger model.
 
 **Security review:** Workflow permissions remain `contents: read`; no secrets,
 write permission, `pull_request_target`, dependency/action-pin changes, or remote
 execution were introduced.
-
-**Next evidence:** This MEMORY-only commit is intentionally the live regression
-probe. It must create PR `verify` but no new Stack run. The existing Stack run on
-the functional head remains the application-stack validation because the final
-tree differs only in this documentation entry.
