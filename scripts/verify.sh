@@ -1356,7 +1356,6 @@ check_workflows_yaml() {
   report_pass "$name" "$count workflow file(s) parse as YAML"
 }
 
-
 # --- Registration ------------------------------------------------------------
 register foundation
 register foundation_version

@@ -826,3 +826,28 @@ read from check-run annotations instead. No second patch loop was started.
 MoQ-over-Iroh synthetic moving encoded media between Android and iOS, direct
 path plus relay fallback, using hello-iroh-ffi/iroh-ffi/moq/iroh-live proven
 pieces; then require physical-device evidence before capture or UI work.
+
+## 2026-09-16 — Final branch/PR reconciliation (PR #19, session branch arena/01a0ab1a-greenfield5)
+
+**Done:** Re-fetched GitHub state and confirmed PR #19 still points at the stale
+candidate branch `arena/01a0a9b5-greenfield5` / `b1adb9d`. The finalized cleanup
+commit `aa5a4a1d1d94fb3780c805cbeadee6c55effacec` is on the required session
+branch `arena/01a0ab1a-greenfield5`; the plan is now explicitly closed as
+DEFER. No production code, UniFFI bridge, or ADR-0007 changed.
+
+**Verified:** Current main-to-final diff contains only durable docs/research and
+memory plus the candidate-removal cleanup; `spikes/boltffi-retest/` and its
+workflow are absent, and `scripts/verify.sh` has no intentional candidate-only
+logic. PR #19 remains open and must not be merged because it does not contain the
+final tree. Final CI for `aa5a4a1` is not yet available; old candidate CI is not
+reused as final-head proof.
+
+**Learned:** The GitHub PR head cannot be moved safely under the session rule
+that permits pushes only to `arena/01a0ab1a-greenfield5`. The compliant path is a
+replacement PR from that branch; PR #19 should remain open for explicit stale-PR
+reconciliation rather than being merged.
+
+**Next:** Create the replacement PR from `arena/01a0ab1a-greenfield5`, wait for
+its exact-head verification, and leave it open for independent review. Then
+Issue #11 is the next bounded task: real Rust MoQ-over-Iroh synthetic media
+between Android and iOS, direct path plus relay fallback, before capture or UI.

@@ -1,6 +1,6 @@
 # Plan — BoltFFI patched-candidate retest (follow-up to PR #18)
 
-**Status:** active. Written before any executable change on this branch; the
+**Status:** closed — DEFER. Written before any executable change on this branch; the
 prior-art gate below was completed before the first push.
 
 ## Requirement (restated)
