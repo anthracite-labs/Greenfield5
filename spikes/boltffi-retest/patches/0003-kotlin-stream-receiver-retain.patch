@@ -1,0 +1,77 @@
+# Patch 0003 - generated Kotlin streams: retain the receiver across subscribe (LOCAL EXTENSION)
+#
+# Upstream base: boltffi v0.30.1, tag commit 2e6320a6d92cb591d22b908477f3a47da7ebc9bc
+# Upstream status: NOT covered by any release, merged commit or open PR. PR #732
+#   (ported verbatim in patch 0002) guards instance methods but leaves the stream
+#   templates on `Native.<subscribe>(boltffiHandle())`. This patch is the local
+#   extension that closes that remaining window, and it is offered upstream.
+#
+# Invariant violated: the same check-then-act as #664, on the subscription path.
+#   The macro-expanded subscribe wrapper dereferences the raw receiver
+#   (`Handle::shared(handle)`) and then calls the stream method on it, so a
+#   concurrent close() can free the allocation mid-call. The lifecycle contract
+#   requires subscriptions to be accounted for, not only ordinary methods.
+#
+# Why this restores it: the template now retains the receiver immediately before
+#   the dereference and releases it in a finally as soon as subscribe returns -
+#   upstream's own idiom, applied to its three delivery shapes (Flow, batch
+#   subscription, callback cancellable). Releasing there is sufficient because
+#   subscribe hands back an independently owned subscription: the wrapper wraps
+#   the method's result in `Arc::into_raw`, and pop_batch/wait/unsubscribe/free
+#   subsequently take the subscription handle only, never the class handle. A
+#   call after close() still fails fast, because boltffiRetain() throws before
+#   any native call is made.
+#
+# Acceptance answers (required for every non-upstream modification):
+#   1. Invariant violated - OPEN->CLOSING->CLOSED: a subscription could begin
+#      dereferencing native memory while close() freed it (use-after-free).
+#   2. Why this restores it - the dereference now happens under a retain that is
+#      released only after subscribe has returned; the counter defers the single
+#      native free until the last retained operation exits.
+#   3. Test that fails if removed - ConcurrentCloseTest phase 4 drives a live
+#      subscription while the owner is closed and requires the native call to
+#      drain with no unexpected exception; the generated-source assertion also
+#      requires that no `Native.*(boltffiHandle())` call remains.
+#   4. Generalization - any BoltFFI user exporting a class that owns streams hits
+#      the same window; the fix lives in the shared template, not in Greenfield5.
+#   5. New assumption and its enforcement - the subscription returned by subscribe
+#      must not borrow the receiver after the call returns. Enforced by the
+#      generated code shape above and verified from the macro expansion for this
+#      revision; if upstream ever returns a borrowed subscription, the retain must
+#      move to the subscription's own lifetime.
+#   6. Maintenance - three sites in one template file; drop it the moment upstream
+#      carries the retain itself.
+#
+# Generated output is never hand-edited: the change is in the template that the
+# CLI compiles in with askama's #[template(path = ...)], so the patched CLI
+# regenerates the Kotlin.
+diff --git a/boltffi_backend/templates/target/kotlin/stream.kt b/boltffi_backend/templates/target/kotlin/stream.kt
+index 477402e5..6b817b24 100644
+--- a/boltffi_backend/templates/target/kotlin/stream.kt
++++ b/boltffi_backend/templates/target/kotlin/stream.kt
+@@ -1,6 +1,6 @@
+ {%- if stream.async_delivery() %}
+ {{ stream.documentation() }}{% if let Some(receiver) = stream.receiver() %}fun {{ receiver }}.{{ stream.name() }}(){% else %}fun {{ stream.name() }}(){% endif %}: kotlinx.coroutines.flow.Flow<{{ stream.item() }}> = kotlinx.coroutines.flow.callbackFlow {
+-    val subscription = Native.{{ stream.subscribe() }}({% if stream.receiver().is_some() %}boltffiHandle(){% endif %})
++    val subscription = {% if stream.receiver().is_some() %}boltffiRetain().let { receiver -> try { Native.{{ stream.subscribe() }}(receiver) } finally { boltffiRelease() } }{% else %}Native.{{ stream.subscribe() }}(){% endif %}
+     if (subscription == 0L) {
+         close()
+         return@callbackFlow
+@@ -31,7 +31,7 @@
+ {%- if let Some(subscription) = stream.batch_subscription() %}
+ {{ stream.documentation() }}{% if let Some(receiver) = stream.receiver() %}fun {{ receiver }}.{{ stream.name() }}(){% else %}fun {{ stream.name() }}(){% endif %}: {{ subscription }} =
+     {{ subscription }}(
+-        handle = Native.{{ stream.subscribe() }}({% if stream.receiver().is_some() %}boltffiHandle(){% endif %}),
++        handle = {% if stream.receiver().is_some() %}boltffiRetain().let { receiver -> try { Native.{{ stream.subscribe() }}(receiver) } finally { boltffiRelease() } }{% else %}Native.{{ stream.subscribe() }}(){% endif %},
+         popBatch = Native::{{ stream.pop_batch() }},
+         wait = Native::{{ stream.wait() }},
+         unsubscribe = Native::{{ stream.unsubscribe() }},
+@@ -78,7 +78,7 @@ class {{ subscription }}(
+ {%- endif %}
+ {%- if let Some(cancellable) = stream.callback_cancellable() %}
+ {{ stream.documentation() }}{% if let Some(receiver) = stream.receiver() %}fun {{ receiver }}.{{ stream.name() }}(callback: ({{ stream.item() }}) -> Unit){% else %}fun {{ stream.name() }}(callback: ({{ stream.item() }}) -> Unit){% endif %}: {{ cancellable }} {
+-    val subscription = Native.{{ stream.subscribe() }}({% if stream.receiver().is_some() %}boltffiHandle(){% endif %})
++    val subscription = {% if stream.receiver().is_some() %}boltffiRetain().let { receiver -> try { Native.{{ stream.subscribe() }}(receiver) } finally { boltffiRelease() } }{% else %}Native.{{ stream.subscribe() }}(){% endif %}
+     if (subscription == 0L) return {{ cancellable }} {}
+     val context = BoltFfiStreamContext(
+         scope = boltffiCallbackScope,

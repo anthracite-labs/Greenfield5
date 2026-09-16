@@ -1,0 +1,204 @@
+# Patch 0002 - generated Kotlin class: in-flight call counter (UPSTREAM PR PORT, verbatim)
+#
+# Upstream base: boltffi v0.30.1, tag commit 2e6320a6d92cb591d22b908477f3a47da7ebc9bc
+#
+# Source of truth for this change: open upstream PR boltffi/boltffi#732
+#   "fix: close the `close()` race with an in-flight call counter"
+#   branch fix/close-race-inflight-counter
+#   head   1b4b0d79e658a04fd1a1f71f007c939f43f8eba7
+#   CI run 31794820582 on that exact head: success (26/26 check-runs)
+#   state  OPEN, mergeable_state "blocked", 6 commits ahead of / 56 behind main
+#   files:  boltffi_backend/src/target/kotlin/render/class.rs
+#           boltffi_backend/templates/target/kotlin/class.kt
+#   The diff below is that PR's cumulative change to those two files, applied
+#   verbatim: the working tree produced by this patch is byte-identical to the
+#   PR head for both paths (verified with `git diff <pr-head> -- <paths>`, empty).
+#   File-level attribution: class.rs from 4ea49c29e18ea39a6b075e62563191a361d5fe92;
+#   class.kt from 4ea49c29 plus c22f89252061c119fa7d64d4e55eea0ba9c157e1
+#   ("Hold async receiver retains until the future frees; reserve C# helper names").
+#   PR #732 also changes Java, C# and test files; those are deliberately NOT
+#   ported, because the retest's contract is Kotlin (Android) and Swift (Apple).
+#   Because the PR's base is not this tag, this is a port rather than a
+#   cherry-pick, and the hunks were verified to apply cleanly to the tag first.
+#
+# Invariant violated: the generated class read the handle through a
+#   `check(!closed)` accessor and then called native code - check-then-act. A
+#   concurrent close() could free the native allocation in the window between the
+#   check and the dereference (upstream issue #664). The Rust side offers no
+#   second check: the macro-expanded wrapper converts the raw handle with
+#   `Handle::shared(handle)` before calling the method.
+#
+# Why this restores it: the class carries an atomic call counter starting at 1
+#   (the foreign object's own reference). Instance methods retain before touching
+#   the handle and release in a finally; async instance methods hold their retain
+#   until the future's free hook, because the Rust async wrapper derives a shared
+#   reference at start and the async block keeps dereferencing it until
+#   completion. close() flips the closed flag and drops the initial reference;
+#   whichever release decrements the counter to zero performs the single native
+#   free. Calls after close() still fail fast with the same IllegalStateException
+#   and close() never blocks. This is the shape UniFFI generates for its Kotlin
+#   objects (mozilla/uniffi-rs ObjectTemplate.kt at main
+#   f2eea6cd7a94995cc522a6d70d1a9bb61fc6cc57, whose comments also reject a
+#   blocking ReadWriteLock destroy as a hang risk).
+#
+# Tests that fail if reverted: android/src/androidTest/.../ConcurrentCloseTest.kt
+#   (sync call racing close x500, async in flight with triple close x200, call
+#   after close x100, subscription while closed x100) and the contract suite's
+#   after-close rejection checks.
+#
+# Upstream fixtures: boltffi_backend/tests/kotlin/exports.rs and its snapshots are
+#   intentionally NOT updated here (this environment has no cargo; upstream's own
+#   suite is not this retest's evidence). A patch offered upstream must refresh
+#   them. Patch 0003 in this directory is a local extension that upstream #732
+#   does not contain.
+diff --git a/boltffi_backend/src/target/kotlin/render/class.rs b/boltffi_backend/src/target/kotlin/render/class.rs
+index 703810c5..2233af3a 100644
+--- a/boltffi_backend/src/target/kotlin/render/class.rs
++++ b/boltffi_backend/src/target/kotlin/render/class.rs
+@@ -49,7 +49,9 @@ pub struct Initializer {
+ struct ConstructorSignature(Vec<String>);
+ 
+ /// Handle read through the generated closed-check accessor. Check-then-act:
+-/// a `close()` racing the native call is not covered.
++/// a `close()` racing the native call is not covered. Receivers instead go
++/// through the generated `boltffiRetain()`/`boltffiRelease()` in-flight
++/// counter, which defers the native free past the racing call.
+ fn guarded_handle(receiver: impl fmt::Display, presence: HandlePresence) -> Result<Expression> {
+     let accessor = Identifier::parse("boltffiHandle")?;
+     match presence {
+@@ -84,14 +86,16 @@ impl Class {
+         let name = Self::type_name(decl.name())?;
+         let instance_methods = Self::methods(
+             decl.methods(),
+-            Some(guarded_handle("this", HandlePresence::Required)?),
++            Some(Expression::identifier(Identifier::parse(
++                "__boltffi_receiver",
++            )?)),
+             host,
+             bridge,
+             context,
+         )?;
+         validate_reserved_members(
+             &name,
+-            &["close", "boltffiHandle"],
++            &["close", "boltffiHandle", "boltffiRetain", "boltffiRelease"],
+             instance_methods
+                 .iter()
+                 .filter(|method| method.parameters().is_empty())
+diff --git a/boltffi_backend/templates/target/kotlin/class.kt b/boltffi_backend/templates/target/kotlin/class.kt
+index 27383630..013ae192 100644
+--- a/boltffi_backend/templates/target/kotlin/class.kt
++++ b/boltffi_backend/templates/target/kotlin/class.kt
+@@ -1,9 +1,10 @@
+ {{ class.documentation() }}class {{ class.name() }} internal constructor(internal val handle: Long) : AutoCloseable {
++    private val __boltffi_calls = java.util.concurrent.atomic.AtomicLong(1L)
+     private val __boltffi_closed = java.util.concurrent.atomic.AtomicBoolean(false)
+ 
+     override fun close() {
+         if (__boltffi_closed.compareAndSet(false, true)) {
+-            Native.{{ class.release() }}(handle)
++            boltffiRelease()
+         }
+     }
+ 
+@@ -11,6 +12,21 @@
+         check(!__boltffi_closed.get()) { "{{ class.name() }} is closed" }
+         return handle
+     }
++
++    internal fun boltffiRetain(): Long {
++        while (true) {
++            check(!__boltffi_closed.get()) { "{{ class.name() }} is closed" }
++            val calls = __boltffi_calls.get()
++            check(calls != 0L) { "{{ class.name() }} is closed" }
++            if (__boltffi_calls.compareAndSet(calls, calls + 1L)) return handle
++        }
++    }
++
++    internal fun boltffiRelease() {
++        if (__boltffi_calls.decrementAndGet() == 0L) {
++            Native.{{ class.release() }}(handle)
++        }
++    }
+ {%- for initializer in class.initializers() %}
+ {%- if initializer.constructor() %}
+ 
+@@ -146,20 +162,26 @@
+         boltffiCallAsync(
+ {%- endif %}
+             createFuture = {
++                val __boltffi_receiver = boltffiRetain()
++                try {
+ {%- for statement in async_call.create_setup() %}
+-                {{ statement }}
++                    {{ statement }}
+ {%- endfor %}
+ {%- if async_call.has_create_cleanup() %}
+-                try {
+-                    {{ async_call.create() }}
+-                } finally {
++                    try {
++                        {{ async_call.create() }}
++                    } finally {
+ {%- for statement in async_call.create_cleanup() %}
+-                    {{ statement }}
++                        {{ statement }}
+ {%- endfor %}
+-                }
++                    }
+ {%- else %}
+-                {{ async_call.create() }}
++                    {{ async_call.create() }}
+ {%- endif %}
++                } catch (__boltffi_failure: Throwable) {
++                    boltffiRelease()
++                    throw __boltffi_failure
++                }
+             },
+             poll = { future, contHandle -> Native.{{ async_call.poll() }}(future, contHandle) },
+             complete = { future ->
+@@ -167,28 +189,36 @@
+                 {{ statement }}
+ {%- endfor %}
+             },
+-            free = { future -> Native.{{ async_call.free() }}(future) },
++            free = { future ->
++                Native.{{ async_call.free() }}(future)
++                boltffiRelease()
++            },
+             cancel = { future -> Native.{{ async_call.cancel() }}(future) },
+         )
+ {%- else %}
++        val __boltffi_receiver = boltffiRetain()
++        try {
+ {%- for statement in method.setup() %}
+-        {{ statement }}
++            {{ statement }}
+ {%- endfor %}
+ {%- if method.has_cleanup() %}
+-        try {
++            try {
+ {%- for statement in method.call() %}
+-            {{ statement }}
++                {{ statement }}
+ {%- endfor %}
+-        } finally {
++            } finally {
+ {%- for statement in method.cleanup() %}
+-            {{ statement }}
++                {{ statement }}
+ {%- endfor %}
+-        }
++            }
+ {%- else %}
+ {%- for statement in method.call() %}
+-        {{ statement }}
++            {{ statement }}
+ {%- endfor %}
+ {%- endif %}
++        } finally {
++            boltffiRelease()
++        }
+ {%- endif %}
+     }
+ {%- endfor %}

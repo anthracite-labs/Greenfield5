@@ -1,0 +1,68 @@
+# Patch 0001 - generated Swift async runtime: Sendable cancellation/free + completion value
+#
+# Upstream base: boltffi v0.30.1, tag commit 2e6320a6d92cb591d22b908477f3a47da7ebc9bc
+# Upstream status: NO released, merged, or open-PR fix exists for this defect as of
+#                  2026-09-16. Issue boltffi/boltffi#778 (exported-class Sendable) is
+#                  open but unrelated: it concerns generated classes, not these
+#                  closures. Open PR #732 does not touch the Swift backend. Nearest
+#                  upstream activity is #718, closed, and not this defect.
+#
+# Prior art (independent derivation; no code copied): VikashLoomba/Portal ships a
+#   fail-closed generator patch making exactly these three changes
+#   (scripts/patch-boltffi-swift.sh inspected at main
+#   8e55cc895b2dc3e1d1dcc6e4ff4840999f9a9ff1, original implementation commit
+#   69262432dbc54ad4a0b806b1b04515ad384a53a4; rationale in
+#   docs/DESIGN-swiftui-boltffi.mdx, section "BoltFFI 0.30.1 generated Swift
+#   patch"). That repository exposes no license file, so nothing from it is copied:
+#   the changes below were derived here from the compiler diagnostic and the
+#   generated source, and they agree with Portal's by construction of the same fix.
+#
+# Invariant violated: `withTaskCancellationHandler(onCancel:)` requires a @Sendable
+#   closure, and Swift 6 rejects capturing the ordinary escaping function values
+#   `cancel`/`free` in it (the PR #18 harvest recorded generated-source errors at
+#   702:13 and 703:13). Separately, the poll/cancellation side resumes the caller's
+#   CheckedContinuation with a value of type T, so T must be Sendable for that value
+#   to cross concurrency domains lawfully.
+#
+# Why the change restores it: `cancel` and `free` are C function references passed
+#   by generated call sites (for example `Native::free`), which capture no state -
+#   the annotation is truthful, not a suppression - and `state` is already
+#   @unchecked Sendable with atomic exactly-once terminal transitions. Constraining
+#   T: Sendable states the real requirement that the completion value is produced
+#   on the poll/cancellation side and consumed on the caller's side. There is no
+#   lifetime, ownership, or free-path change in this patch.
+#
+# What breaks if wrong: over-constraining T makes a generated async method whose
+#   result type is not Sendable (for example an exported class) fail to compile -
+#   it fails closed and visibly, and cannot make the bridge unsound.
+#   Under-constraining is the status quo defect: the generated file does not
+#   compile under Swift 6 at all.
+#
+# Test that fails if reverted: scripts/swift-typecheck.sh must fail against
+#   unmodified 0.30.1 output (RED) and pass against patched output (GREEN), and the
+#   iOS native suite must execute async success and cancellation against real Rust.
+#
+# Open question decided by evidence, not preference: CI records the exact diagnostic
+#   set for both configurations. If the compiler proves `T: Sendable` is not
+#   required, this patch is narrowed to the two @Sendable annotations (smaller
+#   public-API delta) and this header plus the research note are updated. Until
+#   then the constraint stays, because two independent implementations reached it.
+diff --git a/boltffi_backend/templates/target/swift/async.swift b/boltffi_backend/templates/target/swift/async.swift
+index f783144a..0f2a91b1 100644
+--- a/boltffi_backend/templates/target/swift/async.swift
++++ b/boltffi_backend/templates/target/swift/async.swift
+@@ -103,11 +103,11 @@ private let boltffiAsyncPollCallback: @convention(c) (UInt64, Int8) -> Void = {
+     Unmanaged<BoltFFIAsyncPollDriver>.fromOpaque(UnsafeRawPointer(bitPattern: UInt(data))!).takeRetainedValue().handle(result)
+ }
+ 
+-func boltffiAsyncCall<T>(
++func boltffiAsyncCall<T: Sendable>(
+     futureHandle: RustFutureHandle?,
+     poll: @escaping (RustFutureHandle?, UInt64, (@convention(c) (UInt64, Int8) -> Void)?) -> Int8,
+-    cancel: @escaping (RustFutureHandle?) -> Void,
+-    free: @escaping (RustFutureHandle?) -> Void,
++    cancel: @escaping @Sendable (RustFutureHandle?) -> Void,
++    free: @escaping @Sendable (RustFutureHandle?) -> Void,
+     complete: @escaping (RustFutureHandle?, UnsafeMutablePointer<FfiStatus>?) throws -> T
+ ) async throws -> T {
+     let state = BoltFFIFutureState<T>(handle: futureHandle)
