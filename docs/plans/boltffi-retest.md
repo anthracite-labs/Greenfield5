@@ -150,7 +150,7 @@ patch closes it), **N-A** (the shape does not exist at this pin), or
 | 2 | receiver async call (Kotlin) | same | `boltffiRetain()` inside `createFuture` | `close()` while the future runs | the future's `free` hook (`boltffiCallAsync`'s own `finally`); creation failure releases in the `catch` before rethrow | yes (`waitValue`) | **patched** (0002; this is the retain the #732 review thread asked for) |
 | 3 | async creation failure (Kotlin) | same | retain already taken when `create()` throws | a `close()` racing the failed creation | explicit `boltffiRelease()` in `catch`, then rethrow - no leak, no premature free | yes (`waitValue(fail: true)`) | **patched** (0002) |
 | 4 | stream subscribe (Kotlin) | subscription handle from `Native.<subscribe>`, independent of the receiver | `boltffiRetain()` around the subscribe call only (0003) | `close()` during subscribe | `boltffiRelease()` in the surrounding `finally`; the subscription's own `free`/`unsubscribe` takes the subscription handle | yes (`events`, `eventsBatch`) | **patched** (0003, local; PR #732 left these three sites on `boltffiHandle()` = check-then-act) |
-| 5 | stream delivery after subscribe (Kotlin) | native-side callback into the Kotlin flow/context | none on the receiver | a `close()` after subscribe but before/while events arrive; the receiver is only borrowed if the Rust subscription re-dereferences it | subscription `free`/`unsubscribe` | yes | **unresolved** - PR #732's own `class.rs` documentation admits streams keep check-then-act; not hidden, not claimed fixed |
+| 5 | stream delivery after subscribe (Kotlin) | the **subscription handle**, not the receiver: the async flow, the batch subscription and the cancellable all call `Native::<pop_batch>`, `Native::<poll>`, `Native::<unsubscribe>` against the subscription they hold | the receiver is read **only** by the subscribe call itself, which patch 0003 wraps in `boltffiRetain()`/`boltffiRelease()` | a `close()` after subscribe cannot reach the receiver handle any more: there is no post-subscribe receiver read left to race | subscription `free`/`unsubscribe` (its own handle) | yes (`events`, `eventsBatch`, `boundedBatch`, `BOLT_CANCEL`) | **patched on the generated Kotlin side** (0003) - see the path-5 note below; the Rust-side question is bounded, not proven |
 | 6 | object-valued parameter, sync call (Kotlin/Swift) | the callee's own reference (the caller's object is alive for the duration of the call) | macro-side `Handle::shared(handle)` at entry (`param/handle.rs`) | nothing - the synchronous frame keeps the caller's reference alive | macro drops the borrow when the call returns | yes (Kotlin `apply(command:)`, Swift `roundTrip`) | **safe** (single-threaded by construction for the duration of a sync call) |
 | 7 | object-valued parameter, async call (Kotlin/Swift) | *nothing at this pin* | none | the caller can close/drop the argument while the future still dereferences it | - | no (spike's async API takes primitives only) | **N-A at the pinned tag** - upstream added the retention only on `main` (`d5eba2e3`: `engine.shared().await` inside `rust_future_new(async move { .. })`, with dedicated compile tests); recorded as a re-test trigger, not as a candidate defect |
 | 8 | callback lowering with object/callback handles (Swift) | the runtime holds the `BoltFFICallbackHandle` produced by `Unmanaged.passRetained(wrapper)` | handle creation transfers ownership to the runtime | nothing - the runtime owns it | `takeRetainedValue`/`release(handle)` in the bridge; the proxy's own `deinit` releases the boxed Swift implementation | yes (stream callbacks, `Listener` shapes) | **safe** (owned transfer, single consumer) |
@@ -161,9 +161,33 @@ patch closes it), **N-A** (the shape does not exist at this pin), or
 | 13 | stream subscribe / batch pull / cancellable (Swift) | the subscription class holds the subscription `handle`; ARC | subscribe call | `cancel()` from another thread | `deinit { free(handle) }`; the cancellable's `cancel()` is flag-guarded and idempotent | yes (`events`, `eventsBatch`, `boundedBatch`) | **safe** (ARC single owner; no close-vs-call race by construction) |
 | 14 | repeated cancellation / cancel after completion (Swift) | `BoltFFIFutureState` (`BoltFFIFutureState.finish()` is a single atomic exchange) | - | - | terminal state is consumed once; the second `finish()` returns `.finished` and neither resumes nor frees; the winner's terminal step cancels, frees, then resumes, in that order, on the call's queue | yes (`repeatedCancellation`, `cancellationRacingReadiness`) | **patched** (0004 v3: atomic arbitration unchanged, every free funnelled through the one idempotent site) |
 
+**Path 5, stated precisely (re-inspected 2026-09-16 against the patched
+templates, not from memory).** Patch 0003 replaces the receiver read at all three
+stream-subscribe sites with `boltffiRetain().let { receiver -> try {
+Native.<subscribe>(receiver) } finally { boltffiRelease() } }`, and nothing after
+`subscribe` reads the receiver: the async flow hands `subscription` plus the
+`Native::<pop_batch>/<poll>/<unsubscribe>` references to `BoltFfiStreamContext`,
+and the batch/cancellable shapes hold the subscription's own `handle` and call
+`popBatch(handle, ...)`, `wait(handle, ...)`, `unsubscribe(handle)`. Two
+independent checks agree, and both run in CI: the templates emit `boltffiHandle()`
+in exactly one place - its own declaration - and the Android job asserts that at
+build level, on both trees (RED: the unpatched tree must still contain
+check-then-act sites, or the probe refuses to call itself a RED; GREEN: every
+generated line containing `boltffiHandle()` must be the declaration).
+The bounded residual is on the Rust side: `close()` frees the receiver while a
+subscription is live, which is safe only if the Rust subscription does not borrow
+the receiver. In this fixture it does not -
+`EventProbe::events()/events_batch()` return `self.subscription.clone()`, an
+independent `Arc<EventSubscription<u32>>` (`src/lib.rs`), so the subscription
+outlives and does not dereference the probe. For an object whose subscription
+*did* borrow its receiver, the generated Kotlin cannot prove anything and that is
+exactly the contract upstream #664 covers. Recorded as a bounded residual, not as
+verified.
+
 **What this audit does not claim.** Only paths 1-4, 9-10 (Kotlin) and 11-14
-(Swift) are executed by this spike. Path 5 remains an upstream-acknowledged
-window; paths 6-8 are argued from the macro/template source, with 6 and 8
+(Swift) are executed by this spike. Path 5 is closed on the generated Kotlin side
+by 0003 with the Rust-side residual above; paths 6-8 are argued from the
+macro/template source, with 6 and 8
 structure-safe by the ownership model and 7 not constructible at this pin. No
 global "close races fixed" claim is made: the close machinery is Kotlin-only
 (Apple has no explicit `close()`), and the async receiver retain is the part of

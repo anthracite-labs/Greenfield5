@@ -229,6 +229,19 @@ jobs:
           leftover = re.findall(r"Native\.[A-Za-z_]+\([^)\n]*boltffiHandle\(\)", text)
           if leftover:
               problems.append(f"{len(leftover)} native call(s) still read boltffiHandle() directly")
+          # Stronger than the regex above, which only sees a single-line call: the
+          # receiver handle may be *read* only inside its own declaration. Before the
+          # patches, stream.kt emitted three `Native.<subscribe>(boltffiHandle())`
+          # sites (the async flow, the batch subscription and the callback
+          # cancellable) plus one per instance method; after 0002/0003 the only
+          # emission left is `internal fun boltffiHandle(): Long {`. This is the
+          # generated-source proof that no delivery path re-reads the receiver.
+          handle_lines = [ln.strip() for ln in text.splitlines() if "boltffiHandle()" in ln]
+          callers = [ln for ln in handle_lines if not ln.startswith("internal fun boltffiHandle()")]
+          if callers:
+              problems.append(f"{len(callers)} generated line(s) still read boltffiHandle(): {callers[:3]}")
+          if not handle_lines:
+              problems.append("the generated Kotlin has no boltffiHandle() declaration at all")
           if problems:
               emit("error", "BoltFFI GREEN assertion failed", "; ".join(problems))
               sys.exit(1)
@@ -294,6 +307,13 @@ jobs:
           python3 - <<'PY'
           import pathlib, sys
 
+          def fail(msg):
+              # A non-gating probe still has to fail *visibly*: `continue-on-error`
+              # turns a non-zero exit into a green step, so the reason is published as
+              # an annotation instead of only reaching the log.
+              print("::error title=BoltFFI Android contract shapes::" + msg.replace("%", "%25"))
+              sys.exit(1)
+
           def tokens(tree):
               found = set()
               for path in pathlib.Path(tree).rglob("*.kt"):
@@ -303,15 +323,31 @@ jobs:
                           found.add(token)
               return found
 
+          def handle_call_sites(tree):
+              # Lines that *read* the receiver handle outside its own declaration -
+              # the check-then-act shape patch 0002/0003 remove.
+              sites = []
+              for path in pathlib.Path(tree).rglob("*.kt"):
+                  for ln in path.read_text(errors="replace").splitlines():
+                      if "boltffiHandle()" in ln and "fun boltffiHandle()" not in ln:
+                          sites.append(ln.strip())
+              return sites
+
           unpatched, patched = tokens("generated"), tokens("generated-patched")
+          red_sites, green_sites = handle_call_sites("generated"), handle_call_sites("generated-patched")
           print("::notice title=BoltFFI Android contract shapes::"
-                f"unpatched={sorted(unpatched)} patched={sorted(patched)}")
+                f"unpatched={sorted(unpatched)} patched={sorted(patched)} | "
+                f"check-then-act sites: unpatched={len(red_sites)} patched={len(green_sites)}")
           missing = {"__boltffi_calls", "boltffiRetain", "boltffiRelease"} - patched
           if missing:
-              sys.exit(f"patched tree is missing the in-flight counter: {sorted(missing)}")
+              fail(f"patched tree is missing the in-flight counter: {sorted(missing)}")
           leaked = {"__boltffi_calls", "boltffiRetain", "boltffiRelease"} & unpatched
           if leaked:
-              sys.exit(f"the unpatched tree already carries the counter: {sorted(leaked)}")
+              fail(f"the unpatched tree already carries the counter: {sorted(leaked)}")
+          if not red_sites:
+              fail("the unpatched tree has no check-then-act site, so this is not the pre-patch shape")
+          if green_sites:
+              fail(f"the patched tree still reads boltffiHandle() at {len(green_sites)} site(s): {green_sites[:3]}")
           PY
           set +e
           bash scripts/android-emulator-proof.sh red- >red-probe.log 2>&1
@@ -672,6 +708,7 @@ jobs:
           target = "func boltffiAsyncCall<T: Sendable>("
           files = sorted(pathlib.Path("generated").rglob("*.swift"))
           if not files:
+              print("::error title=BoltFFI differential prep::no generated Swift to edit")
               sys.exit("no generated Swift for the differential probe")
           hits = 0
           for path in files:
@@ -680,6 +717,8 @@ jobs:
                   path.write_text(text.replace(target, "func boltffiAsyncCall<T>("))
                   hits += 1
           if hits != 1:
+              print("::error title=BoltFFI differential prep::"
+                    f"expected exactly one boltffiAsyncCall declaration, found {hits}")
               sys.exit(f"expected exactly one boltffiAsyncCall declaration, found {hits}")
           print("::notice title=BoltFFI differential::patched runtime with `T: Sendable` removed from boltffiAsyncCall; everything else identical.")
           PY
@@ -788,7 +827,7 @@ jobs:
               # summaries in one notice, because per-step notices compete for the
               # same annotation budget and had already been dropped in run 35111780326.
               body = encode(lines)[:900]
-              open("sendable-summary.txt", "w").write(title + "\\n" + body.replace("%0A", "\\n"))
+              open("sendable-summary.txt", "w").write(title + "\n" + "\n".join(lines))
               print(f"::notice title={title}::" + body)
           
           status = int(sys.argv[1])
@@ -827,6 +866,8 @@ jobs:
             spikes/boltffi-retest/sendable-probe/typecheck-*.log
             red-generation.log
             green-generation.log
+            differential-summary.txt
+            sendable-summary.txt
             red-typecheck.log
             lifetime-red.log
             lifetime-green.log
@@ -877,6 +918,9 @@ jobs:
           for name in ("differential-summary.txt", "sendable-summary.txt"):
               path = pathlib.Path(name)
               if path.exists():
+                  # Both summaries are written as plain text with real newlines, so
+                  # this single encode() is the only escaping applied - the file
+                  # contents are not pre-escaped.
                   probes.append(path.read_text(errors="replace").strip())
           if probes:
               print("::notice title=BoltFFI probes (non-gating)::"

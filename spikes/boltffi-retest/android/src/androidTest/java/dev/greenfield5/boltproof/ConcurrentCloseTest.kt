@@ -98,10 +98,18 @@ class ConcurrentCloseTest {
             // entry point is *required* to be rejected - that is the contract patch
             // 0002 (upstream #732) implements in the generated Kotlin retain guard.
             // Treating the rejection as a crash is what failed this suite in run
-            // 35111780326: the generated guard threw before any native call, which is
-            // the safe outcome, not a defect. The unpatched build has no counter
-            // (check-then-act), so there the same line reaches native with a stale
-            // handle - the assertion below only accepts *no* other exception.
+            // 35111780326: the guard threw before any native call, which is the safe
+            // outcome, not a defect.
+            //
+            // Precisely, both builds reject an already-closed object with the same
+            // message: the unpatched template's `boltffiHandle()` is
+            // `check(!closed.get()); return handle`, so an *already closed* object
+            // throws there too. The defect is the window between that check and the
+            // native call - `close()` frees the handle in that window and the call
+            // then runs on a freed handle. The patched build replaces the check with
+            // `boltffiRetain()`/`boltffiRelease()`, an atomic in-flight counter that
+            // defers the free until the racing call has drained, so this line is a
+            // deterministic rejection rather than a race with the free.
             try {
                 probe.release()
             } catch (expected: IllegalStateException) {
