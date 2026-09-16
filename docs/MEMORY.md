@@ -851,3 +851,9 @@ reconciliation rather than being merged.
 its exact-head verification, and leave it open for independent review. Then
 Issue #11 is the next bounded task: real Rust MoQ-over-Iroh synthetic media
 between Android and iOS, direct path plus relay fallback, before capture or UI.
+
+## 2026-09-16 — Replacement PR final-head CI observed (PR #20)
+
+**Verified:** Replacement PR #20 initially ran at `31cf96f7c252bc754de4f0cd9b1b808f90536726` in workflow `35125696743`; Foundation gate job `104894060576` and Independent checks job `104894061107` both passed. The final tree's local verification remains `verify.sh` PASS 14/0/4, while local `selftest.sh` remains FAIL 127/1 solely because PyYAML is unavailable and `workflows_yaml/corrupted` was not caught.
+
+**Learned:** The exact-head CI was green for the replacement tree; a subsequent documentation-only update will necessarily require a new exact-head CI result before merge recommendation.
