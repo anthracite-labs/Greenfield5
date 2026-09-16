@@ -3,8 +3,12 @@
 # Upstream base: boltffi v0.30.1, tag commit 2e6320a6d92cb591d22b908477f3a47da7ebc9bc
 # Upstream status: NOT covered by any release, merged commit or open PR. PR #732
 #   (ported verbatim in patch 0002) guards instance methods but leaves the stream
-#   templates on `Native.<subscribe>(boltffiHandle())`. This patch is the local
-#   extension that closes that remaining window, and it is offered upstream.
+#   templates on `Native.<subscribe>(boltffiHandle())` - its own doc comment
+#   concedes that streams keep the check-then-act. This patch is the local
+#   extension that closes that remaining window. Upstreaming status: not yet
+#   filed anywhere; the intended form is a small follow-up to PR #732 (see the
+#   PR body's streams note), which is why the diff is three one-line template
+#   changes with no test-fixture churn.
 #
 # Invariant violated: the same check-then-act as #664, on the subscription path.
 #   The macro-expanded subscribe wrapper dereferences the raw receiver

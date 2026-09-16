@@ -60,25 +60,9 @@ if grep -rqiI "jna" android/build.gradle.kts android/settings.gradle.kts host/ g
 fi
 echo "ANDROID_NO_JNA=confirmed"
 
-# --- 2. assemble debug, minified release and instrumentation ---
-"$REPO_ROOT/apps/android/gradlew" -p android \
-  assembleDebug assembleRelease assembleDebugAndroidTest --no-daemon
-
-# APK file names follow rootProject.name, so discover them instead of assuming
-# a name that a project rename would silently invalidate.
-debug_apk="$(find android/build/outputs/apk/debug -name '*.apk' | head -n 1)"
-release_apk="$(find android/build/outputs/apk/release -name '*.apk' | head -n 1)"
-test_apk="$(find android/build/outputs/apk/androidTest -name '*.apk' | head -n 1)"
-for apk in "$debug_apk" "$release_apk" "$test_apk"; do
-  if [ -z "$apk" ] || [ ! -s "$apk" ]; then
-    echo "expected APK missing after assemble (debug='${debug_apk}' release='${release_apk}' test='${test_apk}')" >&2
-    find android/build/outputs -name '*.apk' >&2 || true
-    exit 1
-  fi
-  echo "ANDROID_APK=$(basename -- "$apk") bytes=$(wc -c <"$apk" | tr -d ' ')"
-done
-readonly debug_apk release_apk test_apk
-
+# --- 2. assembly happens per phase, below: the debug variant, the minified
+#        release variant and the instrumentation APK are all produced and run,
+#        so both the packaging requirement and real execution are covered.
 # --- 3. one emulator image, chosen explicitly and recorded ---
 if ! "$SDKMANAGER" --list_installed 2>/dev/null | grep -Fq "$SYSTEM_IMAGE"; then
   yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
@@ -151,9 +135,15 @@ fi
 "$ADB" shell input keyevent 82 || true
 
 # --- 6. real Kotlin -> generated bindings -> JNI -> Rust execution ---
+# Two phases. A minified release build is where R8 would strip the generated
+# bridge if the keep rules were wrong, so the same instrumentation runs against
+# both variants instead of trusting a debug-only run. Each phase assembles its
+# own APKs (and clears stale outputs first, so discovery can never pick up the
+# other variant's artifact).
 install_and_run() {
   local label="$1" class="$2" timeout_seconds="$3" log="${LOG_PREFIX}$4"
-  "$ADB" install -r -t "$debug_apk"
+  local app_apk="$5" test_apk="$6"
+  "$ADB" install -r -t "$app_apk"
   "$ADB" install -r -t "$test_apk"
   "$ADB" logcat -c
   if ! timeout "$timeout_seconds" "$ADB" shell am instrument -w \
@@ -169,14 +159,39 @@ install_and_run() {
   echo "ANDROID_${label}=PASS"
 }
 
-install_and_run "CONTRACT" "NativeContractTest" 300 contract.log
-grep -q 'BOLT_PROOF version=0.1.0' "${LOG_PREFIX}contract.log"
-grep -E 'BOLT_PROOF|BOLT_STREAM' "${LOG_PREFIX}contract.log" || true
-grep -E 'BOLT_PROOF|BOLT_STREAM' "${LOG_PREFIX}CONTRACT-logcat.txt" || true
-grep -q 'BOLT_STREAM' "${LOG_PREFIX}contract.log" "${LOG_PREFIX}CONTRACT-logcat.txt"
+run_phase() {
+  local variant="$1" assemble_task="$2"
+  local upper="${variant^^}"
+  rm -rf android/build/outputs/apk
+  "$REPO_ROOT/apps/android/gradlew" -p android "-PproofTestBuildType=${variant}" \
+    "$assemble_task" assembleAndroidTest --no-daemon
+  local app_apk test_apk
+  app_apk="$(find android/build/outputs/apk -name '*.apk' -not -path '*/androidTest/*' | head -n 1)"
+  test_apk="$(find android/build/outputs/apk -name '*.apk' -path '*/androidTest/*' | head -n 1)"
+  for apk in "$app_apk" "$test_apk"; do
+    if [ -z "$apk" ] || [ ! -s "$apk" ]; then
+      echo "expected ${variant} APK missing after ${assemble_task} (app='${app_apk}' test='${test_apk}')" >&2
+      find android/build/outputs -name '*.apk' >&2 || true
+      exit 1
+    fi
+  done
+  echo "ANDROID_${upper}_APP_APK=$(basename -- "$app_apk") bytes=$(wc -c <"$app_apk" | tr -d ' ') sha256=$(sha256sum -- "$app_apk" | cut -d' ' -f1)"
+  echo "ANDROID_${upper}_TEST_APK=$(basename -- "$test_apk") bytes=$(wc -c <"$test_apk" | tr -d ' ') sha256=$(sha256sum -- "$test_apk" | cut -d' ' -f1)"
 
-install_and_run "CLOSE" "ConcurrentCloseTest" 300 close.log
-grep -q 'BOLT_CLOSE' "${LOG_PREFIX}close.log" "${LOG_PREFIX}CLOSE-logcat.txt"
-grep 'BOLT_CLOSE' "${LOG_PREFIX}close.log" "${LOG_PREFIX}CLOSE-logcat.txt" || true
+  install_and_run "${upper}_CONTRACT" "NativeContractTest" 300 "${variant}-contract.log" "$app_apk" "$test_apk"
+  grep -q 'BOLT_PROOF version=0.1.0' "${LOG_PREFIX}${variant}-contract.log"
+  grep -E 'BOLT_PROOF|BOLT_STREAM' "${LOG_PREFIX}${variant}-contract.log" || true
+  grep -E 'BOLT_PROOF|BOLT_STREAM' "${LOG_PREFIX}${upper}_CONTRACT-logcat.txt" || true
+  grep -q 'BOLT_STREAM' "${LOG_PREFIX}${variant}-contract.log" "${LOG_PREFIX}${upper}_CONTRACT-logcat.txt"
+
+  install_and_run "${upper}_CLOSE" "ConcurrentCloseTest" 300 "${variant}-close.log" "$app_apk" "$test_apk"
+  grep -q 'BOLT_CLOSE' "${LOG_PREFIX}${variant}-close.log" "${LOG_PREFIX}${upper}_CLOSE-logcat.txt"
+  grep 'BOLT_CLOSE' "${LOG_PREFIX}${variant}-close.log" "${LOG_PREFIX}${upper}_CLOSE-logcat.txt" || true
+}
+
+# Minified release first, then debug: if the release run is the one that
+# exposes an R8/keep-rule problem, the log order makes that obvious.
+run_phase release assembleRelease
+run_phase debug assembleDebug
 
 echo "ANDROID_NATIVE_PROOF=complete"

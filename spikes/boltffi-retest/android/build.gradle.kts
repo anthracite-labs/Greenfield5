@@ -14,10 +14,17 @@ android {
         versionName = "0.1.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    // Proof-only switch (spike app, never the product tree): the same
+    // instrumentation can be built against the minified release variant, so a
+    // keep-rule mistake fails a real execution instead of a static grep.
+    // Both variants are signed with the debug key because the instrumentation
+    // APK must be signed with the same certificate as the app it drives.
+    testBuildType = (findProperty("proofTestBuildType") as String?) ?: "debug"
     buildTypes {
         getByName("release") {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("debug")
         }
     }
     sourceSets.getByName("main") {

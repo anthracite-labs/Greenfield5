@@ -43,6 +43,7 @@ jobs:
   candidate-rust:
     name: BoltFFI candidate Rust
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     defaults:
       run:
         working-directory: spikes/boltffi-retest
@@ -67,7 +68,9 @@ jobs:
   candidate-android:
     name: BoltFFI candidate Android
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    # Release + debug Gradle phases, two instrumentation runs, and the
+    # non-gating RED probe re-running both phases on the same emulator.
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -130,7 +133,7 @@ jobs:
           fi
           cp "$log" provenance-unpatched.txt
 
-      - name: RED assertion - the racy close shape is really present
+      - name: RED assertion - the baseline is unpatched and its shape is published
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -141,33 +144,42 @@ jobs:
               print(f"::{kind} title={title}::{body[:900]}")
 
           root = pathlib.Path("spikes/boltffi-retest/generated-unpatched")
-          files = sorted(root.rglob("*.kt"))
+          files = sorted(p for p in root.rglob("*") if p.is_file())
           if not files:
-              tree = "\n".join(str(p) for p in sorted(root.rglob("*"))[:40]) or "directory missing"
-              emit("error", "BoltFFI RED baseline missing Kotlin", f"no .kt under {root}:\n{tree}")
+              emit("error", "BoltFFI RED baseline missing", f"nothing generated under {root}")
               sys.exit(1)
-          text = "\n".join(f.read_text() for f in files)
-          close = re.search(r"override fun close\(\) \{(.*?)\n    \}", text, re.S)
-          close_body = close.group(1).strip() if close else "<close() not found>"
-          native_calls = re.findall(r"Native\.[A-Za-z_]+\([^)\n]*\)", text)
-          emit("notice", "BoltFFI RED generated shapes",
-               f"files={len(files)}\nclose() body:\n{close_body}\nsample native calls:\n"
-               + "\n".join(native_calls[:6]))
+          emit("notice", "BoltFFI RED generated tree",
+               "\n".join(f"{p.relative_to(root)} ({p.stat().st_size}B)" for p in files[:25]))
+          kotlin = [p for p in files if p.suffix == ".kt"]
+          shapes = []
+          for path in kotlin[:4]:
+              text = path.read_text()
+              close = re.search(r"override fun close\(\) \{\n(.*?)\n    \}", text, re.S)
+              shapes.append(
+                  f"{path.relative_to(root)}: native_refs={text.count('Native.')} "
+                  f"handle_refs={text.count('boltffiHandle')} "
+                  f"closed_flag={'__boltffi_closed' in text} counter={'__boltffi_calls' in text}\n"
+                  f"  close() body: {(close.group(1).strip() if close else '<no 4-space close()>')[:240]}"
+              )
+          emit("notice", "BoltFFI RED generated shapes", "\n".join(shapes) or "no .kt rendered")
+
+          # Provenance gate only. A textual check cannot prove a race; it proves
+          # which generator rendered this tree. The behavioural RED evidence is
+          # the runtime probe below.
+          text = "\n".join(p.read_text() for p in kotlin)
           problems = []
           if "boltffiRetain" in text:
               problems.append("baseline already contains boltffiRetain")
-          if "boltffiHandle" not in text:
-              problems.append("baseline has no boltffiHandle accessor")
-          if "Native." not in close_body:
-              problems.append("close() does not call Native directly")
-          if not re.search(r"Native\.[A-Za-z_]+\([^)\n]*boltffiHandle\(\)", text):
-              problems.append("no native call reads boltffiHandle() directly")
+          if "__boltffi_calls" in text:
+              problems.append("baseline already carries the #732 in-flight counter")
+          if kotlin and "boltffiHandle" not in text:
+              problems.append("baseline has no boltffiHandle accessor - generator shape changed, re-research before patching")
           if problems:
-              emit("error", "BoltFFI RED assertion failed", "; ".join(problems))
+              emit("error", "BoltFFI RED baseline is not unpatched", "; ".join(problems))
               sys.exit(1)
-          emit("notice", "BoltFFI RED baseline",
-               "unpatched v0.30.1 generated Kotlin frees through Native inside close(), passes boltffiHandle() "
-               "straight into native calls, and has no in-flight counter (upstream #664).")
+          emit("notice", "BoltFFI RED baseline (provenance)",
+               "unpatched v0.30.1 generated Kotlin: no in-flight counter and no retain/release guard "
+               "(upstream #664); behavioural RED evidence comes from the runtime probe.")
           PY
 
       - name: Patched generator (GREEN)
@@ -267,8 +279,8 @@ jobs:
         run: |
           set -euo pipefail
           cd spikes/boltffi-retest
-          rm -rf generated
-          cp -R generated-unpatched generated
+          mv generated generated-patched
+          mv generated-unpatched generated
           set +e
           bash scripts/android-emulator-proof.sh red- >red-probe.log 2>&1
           status=$?
@@ -278,10 +290,9 @@ jobs:
           import pathlib, re, sys
           status = int(sys.argv[1])
           text = ""
-          for name in ("red-probe.log", "red-contract.log", "red-close.log"):
-              path = pathlib.Path(name)
-              if path.exists():
-                  text += f"[{name}]\n" + path.read_text(errors="replace")
+          for path in sorted(list(pathlib.Path(".").glob("red-*.log"))
+                             + list(pathlib.Path(".").glob("red-*-logcat.txt"))):
+              text += f"[{path.name}]\n" + path.read_text(errors="replace")
           crash = [ln for ln in text.splitlines()
                    if re.search(r"FATAL EXCEPTION|SIGSEGV|Use after free|native crash|has died|JNI DETECTED ERROR|Fatal signal", ln, re.I)]
           marks = [ln for ln in text.splitlines()
@@ -293,7 +304,7 @@ jobs:
                 + body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[:900])
           PY
           rm -rf generated
-          cp -R generated-patched generated 2>/dev/null || true
+          mv generated-patched generated
 
       - name: Upload candidate Android evidence
         if: always()
@@ -301,11 +312,10 @@ jobs:
         with:
           name: boltffi-candidate-android
           path: |
-            spikes/boltffi-retest/contract.log
-            spikes/boltffi-retest/close.log
+            spikes/boltffi-retest/*-contract.log
+            spikes/boltffi-retest/*-close.log
             spikes/boltffi-retest/emulator.log
-            spikes/boltffi-retest/CONTRACT-logcat.txt
-            spikes/boltffi-retest/CLOSE-logcat.txt
+            spikes/boltffi-retest/*-logcat.txt
             spikes/boltffi-retest/red-*.log
             spikes/boltffi-retest/red-*-logcat.txt
             red-generation.log
@@ -322,8 +332,10 @@ jobs:
           python3 - <<'PY'
           import pathlib, re
           parts = []
-          for name in ("contract.log", "close.log", "emulator.log", "red-close.log",
-                       "native-proof.log", "green-generation.log", "red-generation.log"):
+          for name in ("release-contract.log", "debug-contract.log", "release-close.log",
+                       "debug-close.log", "emulator.log", "red-release-close.log",
+                       "red-debug-close.log", "native-proof.log", "green-generation.log",
+                       "red-generation.log"):
               path = pathlib.Path("spikes/boltffi-retest") / name
               if not path.exists():
                   path = pathlib.Path(name)
@@ -475,8 +487,11 @@ jobs:
         run: |
           set -euo pipefail
           cd spikes/boltffi-retest
-          if [ ! -d generated-patched/swift ]; then
-            echo "::error title=BoltFFI generation missing::generated-patched/swift is absent, so the GREEN generation step must have failed; the native test run cannot proceed."
+          # The apple pack writes generated/apple (+ generated/swift, if configured);
+          # the GREEN step copies that whole tree aside, so any Swift source counts.
+          if ! find generated-patched -name '*.swift' -print -quit | grep -q .; then
+            echo "::error title=BoltFFI generation missing::generated-patched holds no generated Swift, so the GREEN generation step must have failed; the native test run cannot proceed."
+            find generated-patched -maxdepth 3 2>/dev/null || true
             exit 1
           fi
           rm -rf generated

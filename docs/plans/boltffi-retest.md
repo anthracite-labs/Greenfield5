@@ -117,9 +117,9 @@ minimal independent patch. Findings, newest first.
 
 | Fix | Source rung | Provenance |
 | --- | --- | --- |
-| Swift async Sendable | open-PR rung empty; external prior art | `patches/0001-swift-async-sendable-cancel-free.patch`; independent 3-annotation change to `templates/target/swift/async.swift`; agrees with Portal `69262432`; `T: Sendable` retained unless CI proves it unnecessary (then narrowed) |
+| Swift async Sendable | open-PR rung empty; external prior art | `patches/0001-swift-async-sendable-cancel-free.patch`; independent 3-annotation change to `templates/target/swift/async.swift`; agrees with Portal `69262432`; `T: Sendable` **proven necessary** by the retest's own differential probe, not retained on preference |
 | Kotlin in-flight counter | **open upstream PR #732** | `patches/0002-upstream-pr732-kotlin-inflight-counter.patch`; PR #732's cumulative change to `render/class.rs` + `templates/target/kotlin/class.kt`, applied **verbatim** (working tree byte-identical to that head for both paths), ported because the PR's base is not this tag; Java/C# halves deliberately not ported (contract is Kotlin/Swift) |
-| Kotlin stream subscribe retain | local extension (PR #732 gap) | `patches/0003-kotlin-stream-receiver-retain.patch`; three sites in `templates/target/kotlin/stream.kt`; offered upstream |
+| Kotlin stream subscribe retain | local extension (PR #732 gap) | `patches/0003-kotlin-stream-receiver-retain.patch`; three sites in `templates/target/kotlin/stream.kt`; **not yet filed upstream** - the intended form is a three-line follow-up to PR #732, and the header records the 6-question acceptance answers |
 
 - Deterministic provenance check: the three patches apply cleanly to a pristine
   tag checkout (`git apply --check`, all three), and the resulting tree hashes to
@@ -157,6 +157,58 @@ templates on `Native.<subscribe>(boltffiHandle())`. The macro expansion proves
 that is the same defect on the subscription path, which the acceptance criteria
 require to be accounted for. Patch 0003 applies upstream's own retain idiom to
 the three delivery shapes.
+
+## Evidence log (executed, newest first)
+
+Every entry is an executed CI run of `.github/workflows/boltffi-retest.yml` on
+this branch. Raw job logs are not retrievable from the sandbox, so each step also
+publishes annotations (`::notice` / `::error`); those annotations, plus the
+artifact set, are what is quoted here.
+
+**Run `35089590460` (head `6e0922f`) - Swift 6 RED reproduced for real.**
+
+- Unpatched v0.30.1, real project, real compiler, generated file
+  `Greenfield5BoltSpikeBoltFFI.swift`:
+  `702:13: error: capture of 'cancel' with non-sendable type '(RustFutureHandle?) -> Void' (aka '(Optional<UnsafeRawPointer>) -> ()') in a '@Sendable' closure`,
+  the same for `free` at `703:13`, each followed by
+  `note: a function type must be marked '@Sendable' to conform to 'Sendable'`.
+  Same defect and same lines as PR #18's harvest record, now produced by the
+  harness that also runs the GREEN half.
+- Differential probe (params only: the two `@Sendable` annotations, **no**
+  `T: Sendable`): `xcodebuild exit 65` with
+  `678:46: error: sending 'value' risks causing data races`. `T: Sendable` is
+  therefore required by this toolchain; patch 0001 keeps all three changes.
+- GREEN generator assertion passed: the patched CLI emits >=2
+  `@escaping @Sendable (RustFutureHandle?) -> Void` and
+  `func boltffiAsyncCall<T: Sendable>(`.
+- Harness defect found and fixed at this head: `apple-proof.sh` invoked
+  `xcodebuild` from the spike directory, so the previous run reported
+  `'Greenfield5.xcodeproj' does not exist` instead of a compiler result; every
+  bounded invocation now runs inside the copied project.
+- Still open at that head: the Apple "restore the patched generation" step
+  checked `generated-patched/swift`, which the apple pack does not create here
+  (its Swift API lives under `generated/apple/Sources`), so it is now a search
+  for any generated Swift. The Android RED assertion also gated on shapes it
+  had assumed (`Native.*(boltffiHandle())` inside `close()`) instead of measured;
+  it now publishes the whole generated tree plus per-file structural facts and
+  gates only on provenance.
+- Not yet executed at that head: the Android emulator proof (and therefore the
+  minified-release path) and the iOS native test run.
+
+**Patch set at head `6e0922f`** (SHA-256 of each file as committed; the current
+heads are re-derived and published by the workflow on every run):
+
+| Patch | Bytes | SHA-256 |
+| --- | --- | --- |
+| `0001-swift-async-sendable-cancel-free.patch` | 4742 | `2a615096a174a5f5ee3b8d681a02f05cf8260cb05938f88dfe7ed96bd7784330` |
+| `0002-upstream-pr732-kotlin-inflight-counter.patch` | 8874 | `44265dc879c89554ae076b1a1889c1f325142cd28c4120b1800e3642aecfd0cc` |
+| `0003-kotlin-stream-receiver-retain.patch` | 6057 | `03ecb4f702266a4f8a1f3ffefe991a714d0be8173de38964b12a4541e5e63bea` |
+
+Re-verified at that head: all three `git apply --check` clean against a pristine
+`2e6320a6` checkout, combined diffstat **4 files, +59/-25**
+(`target/kotlin/render/class.rs`, `templates/target/kotlin/class.kt`,
+`templates/target/kotlin/stream.kt`, `templates/target/swift/async.swift`).
+
 
 ## Approach
 
@@ -197,11 +249,18 @@ generated code.
 
 ## Risks / unknowns
 
-- **`T: Sendable` may be unnecessary**: decided by the CI differential probe, not
-  by preference. If unnecessary, patch 0001 is narrowed to the two annotations
-  and the headers/docs are updated.
+- ~~**`T: Sendable` may be unnecessary**~~ - decided by the differential probe on
+  2026-09-16: it is required (the params-only variant still fails with "sending
+  'value' risks causing data races"), so patch 0001 keeps all three changes.
 - **Emulator boot** is the highest-risk step; PR #18's failure was opaque.
-  Mitigation: publish everything, preflight KVM/accel, finite ceiling.
+  Mitigation: publish everything (image, command line, accel report, adb state,
+  boot properties, emulator stdout/stderr), preflight KVM/accel, finite ceiling.
+- **Generated-file layout for `pack android`** is not yet confirmed from a real
+  run: the RED baseline published a single `.kt` whose shapes look like the
+  Kotlin runtime helper rather than the class module. The new per-file listing
+  resolves it; the GREEN assertions (counter + retain/release + retain-wrapped
+  subscribe, no raw `boltffiHandle()` argument) are the ones that must hold, and
+  they passed.
 - **Patch 0002/0003 are not compiled in this sandbox** (no cargo). The method
   path is upstream-CI-proven; the stream path is verified structurally and by
   the generated-source assertions, then by compilation on CI.

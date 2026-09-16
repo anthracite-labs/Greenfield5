@@ -24,6 +24,13 @@
 #   CheckedContinuation with a value of type T, so T must be Sendable for that value
 #   to cross concurrency domains lawfully.
 #
+#
+# Necessity measured, not asserted: the retest's own differential probe rebuilds
+#   the generated Swift with only the two `@Sendable` annotations (no `T: Sendable`)
+#   and still fails the real project - xcodebuild exit 65 with
+#   "error: sending 'value' risks causing data races" at generated line 678:46 -
+#   so the constraint is required for this toolchain, not defensive.
+#
 # Why the change restores it: `cancel` and `free` are C function references passed
 #   by generated call sites (for example `Native::free`), which capture no state -
 #   the annotation is truthful, not a suppression - and `state` is already
