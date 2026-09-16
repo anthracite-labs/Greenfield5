@@ -945,3 +945,25 @@ in *other* tooling, not this job: the glyph summary `✔ Test run with N tests
 passed ...` (BoltFFI-spike annotations) and a quoted-display-name variant. A
 parser that recognises the wrong decoration silently keeps F3 open - the
 notice's own output, not the job's green status, is what proves the fix.
+
+**Final evidence (F1-F4 cleanup, session branch `arena/01a0ab42-greenfield5`):**
+Head `6543d67b51c22289ddeec31fa79506e31d2cd30a`. Exact-head `Stack` run
+`35134401021` succeeded with Rust core job `104923027876` (Format, Lint, Test),
+Android shell job `104923027742` (UniFFI generation, unit tests + debug assembly,
+and "Release assembly (proves R8 keep rules)" after the dead keeps were removed),
+and iOS shell job `104923027959` (generated Swift + XCFramework, app build, "Run
+iOS tests"). Exact-head `verify` run `35134400912` succeeded (Foundation gate +
+Independent checks). The iOS success notice at that head published exactly
+`executed: 11 test cases (11 passed, 0 failed) [source: swift-testing case lines]`
+with the two `Test suite ... started on` lines, the per-case `Test case '...'
+passed on '...'` lines and `** TEST SUCCEEDED **` - i.e. 4 AppNavigationTests +
+7 BridgeTests counted from the real case lines, F3 verified in CI and not merely
+in the local fixture. Earlier heads are recorded for honesty, not as evidence:
+`1d8f73a` Stack `35129931987` was green but its notice still warned (F3 stayed
+open), and `5a3324d` Stack `35131864404` was green with the widened-but-wrong
+grammar. Local gates on the final tree: `git diff --check` clean, `verify.sh`
+PASS 16/0/2, `selftest.sh` PASS 128/128, shellcheck clean, 32 `run:` blocks pass
+`bash -n`, 28 embedded Python heredocs compile. Untouched by design: `docs/
+decisions/**`, `core/Cargo.toml`, `core/Cargo.lock`, `rust-toolchain.toml`,
+`core/uniffi.toml`, Gradle/AGP files, generated bindings and `core/src/**` show
+an empty diff against `main`.
