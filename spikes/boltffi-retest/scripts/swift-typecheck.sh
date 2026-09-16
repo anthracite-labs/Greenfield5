@@ -17,22 +17,37 @@ readonly LOG="${SPIKE_DIR}/typecheck-${LABEL}.log"
 
 cd -- "$SPIKE_DIR"
 
-swift_file="$(find generated/swift -name '*.swift' | head -n 1)"
-modulemap="$(find generated/apple -name 'module.modulemap' | head -n 1)"
-if [ -z "$swift_file" ] || [ -z "$modulemap" ]; then
-  echo "missing generated Swift ('${swift_file}') or modulemap ('${modulemap}')" >&2
+# Where the Swift API lands depends on the SPM layout the project configures:
+#   ffi-only / bundled -> <targets.apple.spm.output, default targets.apple.output>/Sources/BoltFFI
+#   split              -> <targets.apple.swift.output>/BoltFFI
+# apple-proof.sh searches the same two places, so a layout change can never make
+# this probe silently type-check nothing.
+swift_files=()
+while IFS= read -r file; do
+  [ -n "$file" ] && swift_files+=("$file")
+done < <(find generated/apple/Sources generated/swift -name '*.swift' 2>/dev/null | sort -u)
+modulemap="$(find generated/apple -name 'module.modulemap' 2>/dev/null | head -n 1)"
+
+echo "SWIFT_TYPECHECK_LABEL=${LABEL}"
+if [ "${#swift_files[@]}" -eq 0 ] || [ -z "$modulemap" ]; then
+  # Fail loudly and *attributably*: a missing artifact is a harness result, not
+  # a compiler result, and the next reader needs to see which one it was.
+  echo "SWIFT_TYPECHECK_MISSING swift_files=${#swift_files[@]} modulemap=${modulemap:-none}"
+  echo "---- generated tree (bounded) ----"
+  find generated -maxdepth 4 -print 2>/dev/null | head -n 60
+  echo "no generated Swift under generated/apple/Sources or generated/swift, or no module.modulemap under generated/apple" >&2
   exit 1
 fi
-readonly swift_file modulemap
+for file in "${swift_files[@]}"; do
+  echo "SWIFT_TYPECHECK_FILE=${file}"
+done
 headers_dir="$(dirname -- "$modulemap")"
-readonly headers_dir
 
 sdk_path="$(xcrun --sdk iphonesimulator --show-sdk-path)"
 
-echo "SWIFT_TYPECHECK_LABEL=${LABEL}"
-echo "SWIFT_TYPECHECK_FILE=${swift_file}"
+echo "SWIFT_TYPECHECK_MODULEMAP=${modulemap}"
 echo "SWIFT_TYPECHECK_HEADERS_DIR=${headers_dir}"
-echo "SWIFT_TYPECHECK_MODULEMAP=$(cat -- "$modulemap")"
+echo "SWIFT_TYPECHECK_MODULEMAP_CONTENT=$(cat -- "$modulemap")"
 
 set +e
 xcrun --sdk iphonesimulator swiftc \
@@ -41,7 +56,7 @@ xcrun --sdk iphonesimulator swiftc \
   -target arm64-apple-ios16.0-simulator \
   -sdk "$sdk_path" \
   -I "$headers_dir" \
-  "$swift_file" >"$LOG" 2>&1
+  "${swift_files[@]}" >"$LOG" 2>&1
 status=$?
 set -e
 

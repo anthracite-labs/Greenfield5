@@ -120,35 +120,57 @@ minimal independent patch. Findings, newest first.
 | Swift async Sendable | open-PR rung empty; external prior art | `patches/0001-swift-async-sendable-cancel-free.patch`; independent 3-annotation change to `templates/target/swift/async.swift`; agrees with Portal `69262432`; `T: Sendable` **proven necessary** by the retest's own differential probe, not retained on preference |
 | Kotlin in-flight counter | **open upstream PR #732** | `patches/0002-upstream-pr732-kotlin-inflight-counter.patch`; PR #732's cumulative change to `render/class.rs` + `templates/target/kotlin/class.kt`, applied **verbatim** (working tree byte-identical to that head for both paths), ported because the PR's base is not this tag; Java/C# halves deliberately not ported (contract is Kotlin/Swift) |
 | Kotlin stream subscribe retain | local extension (PR #732 gap) | `patches/0003-kotlin-stream-receiver-retain.patch`; three sites in `templates/target/kotlin/stream.kt`; **not yet filed upstream** - the intended form is a three-line follow-up to PR #732, and the header records the 6-question acceptance answers |
+| Swift async future ownership | local patch (no upstream fix exists) | `patches/0004-swift-async-future-lifetime.patch`; one file, `templates/target/swift/async.swift`; issued because the *same* defect class was already fixed once upstream (`b01038ef`, "do not double-drive async poll Ready via return and callback") and the owner/lifetime half was still open at `main` `d5eba2e3`; header records the two concrete UAF mechanisms, the rejected alternatives (`canPoll()` re-check, free-after-`cancel`, blocking lock, `passRetained` shortcuts) and the 6-question acceptance answers |
 
-- Deterministic provenance check: the three patches apply cleanly to a pristine
-  tag checkout (`git apply --check`, all three), and the resulting tree hashes to
-  a single value the CI run re-derives and publishes
-  (`BOLTFFI_PATCHED_TREE_SHA256`).
+- Deterministic provenance check: the four patches apply cleanly to a pristine
+  tag checkout (`git apply --check`), and the resulting tree hashes to a single
+  value the CI run re-derives and publishes (`BOLTFFI_PATCHED_TREE_SHA256`).
+- Upstream status re-checked 2026-09-16 (immutable refs): release v0.30.1 =
+  `2e6320a6d92cb591d22b908477f3a47da7ebc9bc`; `main` =
+  `d5eba2e347a957a7fce67bb738ae37d985ba082b`; `git diff <tag> main --
+  boltffi_backend/templates/target/swift/` is **empty**; PR #732 head
+  `1b4b0d79e658a04fd1a1f71f007c939f43f8eba7`, still open, `mergeable_state
+  blocked`, and it touches no Swift file. So the Swift defect is both unreleased
+  and unfixed upstream, and nothing was re-invented locally.
 
-## Lifecycle and retain/release structural review (all paths)
+## Ownership audit - per path (2026-09-16)
 
-Generated Rust wrapper (macro-expanded, `boltffi_macros`) converts the raw
-handle with `Handle::shared(handle)` before any method body runs, so a foreign
-referenced-count that reaches zero mid-call is a use-after-free with no second
-check at the boundary.
+Source-level audit of every path a foreign shell can take into the generated
+bridge, against the *pinned* tag `2e6320a6` plus patches 0001-0004. "Owns" names
+the thing that holds the native allocation; "acquires" is when the foreign side
+takes a reference; "races" is what can destroy the allocation while the path is
+live; "releases" is who gives the last reference back. Status is one of
+**safe** (no window at this pin), **patched** (a window existed and the listed
+patch closes it), **N-A** (the shape does not exist at this pin), or
+**unresolved** (a window remains; recorded, not papered over).
 
-| Path | Handle use | Retain held | Free performed by |
-| --- | --- | --- | --- |
-| sync instance method (Kotlin) | `__boltffi_receiver` from `boltffiRetain()` | entry → `finally { boltffiRelease() }` | last `boltffiRelease()` (count 1 from construction + 1 per in-flight call) |
-| async instance method (Kotlin) | same, captured into `createFuture` | entry → the future's `free` hook (`boltffiCallAsync` calls `free(rustFuture)` exactly once in its `finally`) | same; creation failure releases in a `catch` before rethrow |
-| async future creation throws (Kotlin) | retain already taken | released in `catch (Throwable)` | same |
-| stream subscribe (Kotlin, patch 0003) | receiver dereferenced by `Handle::shared` inside `Native.<subscribe>` | `boltffiRetain()` → `finally { boltffiRelease() }` around the call | subscription is `Arc::into_raw` of the method result, so it does not borrow the receiver; its own `free`/`unsubscribe` take the subscription handle only |
-| `close()` (Kotlin) | none | flags closed, drops the initial reference | the release that decrements to zero |
-| repeated close (Kotlin) | none | `compareAndSet(false, true)` makes later calls no-ops | unchanged |
-| call after close (Kotlin) | `boltffiRetain()` throws `IllegalStateException` before any native call | never taken | unchanged |
-| Swift instance method | `handle` (ARC keeps the caller's reference alive for the call) | ARC | `deinit { release(handle) }` |
-| Swift async instance method | same | ARC; the task frame owns the boxed reference | `deinit` after the call returns |
-| Swift stream subscription | subscribe takes the handle; subscription class owns `handle`/`readBatch`/`free` | ARC | `deinit` (batch) / `cancel()` path (cancellable) |
-| cancellation (Kotlin/Swift) | terminal arbitration in generated runtime | async retain released by the future's free hook | exactly one of complete/cancel paths |
+| # | Path | Owns | Acquires | Races | Releases | Exercised by Greenfield5 | Status |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 1 | receiver sync call (Kotlin) | the Kotlin object's `handle`, refcounted by `__boltffi_calls` (`AtomicLong(1)`) | `boltffiRetain()` before the native call | `close()` from another thread | `finally { boltffiRelease() }`; the decrement to zero performs the only native free | yes (`GreenfieldSession.sendCommand`, contract suite) | **patched** (0002 = upstream #732 verbatim) |
+| 2 | receiver async call (Kotlin) | same | `boltffiRetain()` inside `createFuture` | `close()` while the future runs | the future's `free` hook (`boltffiCallAsync`'s own `finally`); creation failure releases in the `catch` before rethrow | yes (`waitValue`) | **patched** (0002; this is the retain the #732 review thread asked for) |
+| 3 | async creation failure (Kotlin) | same | retain already taken when `create()` throws | a `close()` racing the failed creation | explicit `boltffiRelease()` in `catch`, then rethrow - no leak, no premature free | yes (`waitValue(fail: true)`) | **patched** (0002) |
+| 4 | stream subscribe (Kotlin) | subscription handle from `Native.<subscribe>`, independent of the receiver | `boltffiRetain()` around the subscribe call only (0003) | `close()` during subscribe | `boltffiRelease()` in the surrounding `finally`; the subscription's own `free`/`unsubscribe` takes the subscription handle | yes (`events`, `eventsBatch`) | **patched** (0003, local; PR #732 left these three sites on `boltffiHandle()` = check-then-act) |
+| 5 | stream delivery after subscribe (Kotlin) | native-side callback into the Kotlin flow/context | none on the receiver | a `close()` after subscribe but before/while events arrive; the receiver is only borrowed if the Rust subscription re-dereferences it | subscription `free`/`unsubscribe` | yes | **unresolved** - PR #732's own `class.rs` documentation admits streams keep check-then-act; not hidden, not claimed fixed |
+| 6 | object-valued parameter, sync call (Kotlin/Swift) | the callee's own reference (the caller's object is alive for the duration of the call) | macro-side `Handle::shared(handle)` at entry (`param/handle.rs`) | nothing - the synchronous frame keeps the caller's reference alive | macro drops the borrow when the call returns | yes (Kotlin `apply(command:)`, Swift `roundTrip`) | **safe** (single-threaded by construction for the duration of a sync call) |
+| 7 | object-valued parameter, async call (Kotlin/Swift) | *nothing at this pin* | none | the caller can close/drop the argument while the future still dereferences it | - | no (spike's async API takes primitives only) | **N-A at the pinned tag** - upstream added the retention only on `main` (`d5eba2e3`: `engine.shared().await` inside `rust_future_new(async move { .. })`, with dedicated compile tests); recorded as a re-test trigger, not as a candidate defect |
+| 8 | callback lowering with object/callback handles (Swift) | the runtime holds the `BoltFFICallbackHandle` produced by `Unmanaged.passRetained(wrapper)` | handle creation transfers ownership to the runtime | nothing - the runtime owns it | `takeRetainedValue`/`release(handle)` in the bridge; the proxy's own `deinit` releases the boxed Swift implementation | yes (stream callbacks, `Listener` shapes) | **safe** (owned transfer, single consumer) |
+| 9 | close / repeated close (Kotlin) | the object's initial reference | - | - | `close()` = `compareAndSet(false, true)` then one `boltffiRelease()`; later closes are no-ops | yes | **patched** (0002) |
+| 10 | call after close (Kotlin) | - | `boltffiRetain()` throws `IllegalStateException` before any native call | - | - | yes (`stateCode` after close in the contract suite) | **patched** (0002) |
+| 11 | receiver sync/async call (Swift) | the generated class instance's `handle`; ARC | none needed - the caller's reference is live for the call | `deinit` cannot run while the caller holds the instance | `deinit { release(handle) }`, exactly once by ARC | yes | **safe** (no explicit `close()`, so no close race exists on Apple) |
+| 12 | async call, future handle (Swift) | `BoltFFIFutureLifetime` (one raw handle + the `@Sendable` free) | the call takes the handle `Arc::into_raw` in `rust_future_new` returned | the *old* driver freed it from the Ready path, the error path and both cancellation branches while a `Task`-scheduled re-poll could still run (mechanism A) and while the runtime was inside its own `poll` frame (mechanism B) | `deinit`, once, enqueued on the call's serial `DispatchQueue` after every poll/cancel issued for that call | yes - this is `BoltOwnership.repeatedCancellation`, the SIGSEGV | **patched** (0004; the 0001 pair only made it compile) |
+| 13 | stream subscribe / batch pull / cancellable (Swift) | the subscription class holds the subscription `handle`; ARC | subscribe call | `cancel()` from another thread | `deinit { free(handle) }`; the cancellable's `cancel()` is flag-guarded and idempotent | yes (`events`, `eventsBatch`, `boundedBatch`) | **safe** (ARC single owner; no close-vs-call race by construction) |
+| 14 | repeated cancellation / cancel after completion (Swift) | `BoltFFIFutureState` (`BoltFFIFutureState.finish()` is a single atomic exchange) | - | - | terminal state is consumed once; the second `finish()` returns `.finished` and neither resumes nor frees | yes (`repeatedCancellation`, `cancellationRacingReadiness`) | **patched** (0004 keeps the atomic arbitration and removes every other free) |
+
+**What this audit does not claim.** Only paths 1-4, 9-10 (Kotlin) and 11-14
+(Swift) are executed by this spike. Path 5 remains an upstream-acknowledged
+window; paths 6-8 are argued from the macro/template source, with 6 and 8
+structure-safe by the ownership model and 7 not constructible at this pin. No
+global "close races fixed" claim is made: the close machinery is Kotlin-only
+(Apple has no explicit `close()`), and the async receiver retain is the part of
+#664 that these 4 patches close on the paths Greenfield5 actually uses.
 
 **Asymmetry recorded, not hidden:** generated Swift classes have no explicit
-`close()` — only `deinit` + ARC — so "close racing an in-flight call" is a
+`close()` - only `deinit` + ARC - so "close racing an in-flight call" is a
 Kotlin/Java/C# problem (upstream #664), and the Swift side is analysed and
 tested (terminal-exactly-once invariants) rather than patched.
 
@@ -156,7 +178,14 @@ tested (terminal-exactly-once invariants) rather than patched.
 templates on `Native.<subscribe>(boltffiHandle())`. The macro expansion proves
 that is the same defect on the subscription path, which the acceptance criteria
 require to be accounted for. Patch 0003 applies upstream's own retain idiom to
-the three delivery shapes.
+the three delivery shapes - and remains labelled local, not upstream.
+
+**Swift future-handle defect, stated precisely.** `rust_future_free` may be
+called only when nothing can dereference the handle any more: no poll in flight,
+no callback the runtime makes into the module, and no re-poll queued but not yet
+run. Patch 0004's owner is what enforces that, and
+`host/LifetimeProbe.swift` asserts it against a model of the contract
+(borrowed poll/cancel/complete, consuming free) rather than against a hope.
 
 ## Evidence log (executed, newest first)
 
@@ -164,6 +193,48 @@ Every entry is an executed CI run of `.github/workflows/boltffi-retest.yml` on
 this branch. Raw job logs are not retrievable from the sandbox, so each step also
 publishes annotations (`::notice` / `::error`); those annotations, plus the
 artifact set, are what is quoted here.
+
+**Run `35098039373` (head `580e425`, patch 0004 first execution) - two harness
+defects, no candidate result yet.**
+
+- Rust job `104800184990` **success**: the patch set does not disturb the Rust
+  contract suite (0004 touches only the Swift template).
+- Apple job `104800185152` **failed before it reached the compiler**, and the new
+  diagnostics say why: the RED assertion reported
+  *"BoltFFI Swift 6 RED was not the Sendable defect"* with an empty log extract,
+  and the always-run restore step reported
+  *"generated-patched holds no generated Swift"*.
+  Root cause, found from the CLI source rather than guessed: with
+  `layout = "ffi-only"` the Apple pack writes the Swift API to
+  `<targets.apple.spm.output>/Sources/BoltFFI` (`pack/apple/mod.rs:239-245`;
+  `apple_spm_output()` defaults to `targets.apple.output`), **not** to
+  `generated/swift`, which only exists in the `split` layout. `swift-typecheck.sh`
+  searched only `generated/swift`, hit its own guard, and exited 1 - a harness
+  result that the old diagnostics could not distinguish from a compiler result.
+  Fixed: the probe searches both layouts, type-checks *all* generated Swift files
+  (not just the first), prints `SWIFT_TYPECHECK_MISSING` plus a bounded tree dump
+  when it finds nothing, and the workflow now emits the log tail as an
+  `::error`/`%0A`-encoded annotation for either cause.
+- Android job `104800184728` **failed at patch application**:
+  `error: patch failed: boltffi_backend/templates/target/swift/async.swift:110 /
+  patch does not apply`. Root cause: the fetch script checked *every* patch
+  against the pristine tree before applying any. That was valid only while the
+  patches touched disjoint files; 0004 edits the same file as 0001, so the
+  pre-flight check rejected a correct patch set. Fixed: patches are now checked
+  and applied cumulatively, and a failure rolls the checkout back to the pristine
+  tag so no half-patched generator can be built.
+- Control added, because both defects were "code in a workflow that only runs on
+  a runner": `scripts/verify.sh` now has a `workflow_steps` check that extracts
+  every `run:` body from every workflow, runs `bash -n` on it and `compile()` on
+  every embedded python heredoc. Verified negatively: an injected
+  generator-expression error and an injected unmatched `fi` both make it FAIL
+  (the first version of the check had a real gap - step indices restart per job,
+  so two jobs' steps overwrote each other in the scratch directory and went
+  unchecked; the job name is now part of the file name).
+- Also found at this head: the runner reports
+  `Node.js 20 is deprecated ... forced to run on Node.js 24` for the two pinned
+  actions. Advisory only; the pins are unchanged.
+
 
 **Run `35089590460` (head `6e0922f`) - Swift 6 RED reproduced for real.**
 
@@ -227,13 +298,21 @@ generated code.
 2. **Patch provenance** via `scripts/fetch-patched-boltffi.sh` (exact-SHA
    checkout, `git apply --check` first, patch SHA-256 + changed files +
    patched-tree SHA-256 published).
-3. **RED → GREEN for Swift 6**: the Apple job builds the *unpatched* CLI first,
-   installs that generated Swift into the real project copy and records that the
-   bounded `xcodebuild` build fails with the non-Sendable diagnostics, then
-   rebuilds the patched CLI and runs the real build+test. A non-gating
-   differential probe builds a *params-only* variant (cancel/free `@Sendable`
-   without `T: Sendable`) to decide empirically whether the constraint is
-   required.
+3. **RED → GREEN, two independent pairs, same generator:**
+   - *Swift 6 compilation*: the Apple job builds the *unpatched* CLI first and
+     type-checks its generated Swift with `swiftc -swift-version 6`
+     (`scripts/swift-typecheck.sh`), which must fail on the non-Sendable
+     `cancel`/`free` captures; the patched CLI is then rebuilt and the same
+     command must pass. A non-gating differential probe type-checks a
+     *params-only* variant (cancel/free `@Sendable` without `T: Sendable`) to
+     decide empirically whether the constraint is required.
+   - *Swift future lifetime*: the job rebuilds the runtime with
+     `--exclude 0004` (same generator, one fix removed) and runs
+     `scripts/apple-proof.sh lifetime`, i.e. `host/LifetimeProbe.swift` against
+     the generated runtime; that must fail with a recorded lifetime violation.
+     The patched runtime then runs the same probe, which must pass, and the full
+     `apple-proof.sh test` adds the real-Rust suite (`BOLT_PROOF`,
+     `BOLT_BACKLOG`, `BOLT_LIFETIME`) on the simulator.
 4. **Android native execution**: `scripts/android-emulator-proof.sh` — no-JNA
    gate, debug/release/instrumentation assembly, explicit image/AVD, recorded
    acceleration and command line, finite boot ceiling with full diagnostics on
@@ -267,6 +346,15 @@ generated code.
 - **Host API names**: PR #18's Kotlin host is compile-proven; the Swift host has
   never compiled (its Apple job failed earlier), so Swift symbol names are
   inferred from the generator templates and verified on CI.
+- **Patch 0004's first draft was wrong and was corrected before it ran**: merely
+  queueing the *poll* while still freeing inline from the callback leaves the
+  wake path freeing inside the runtime's callback frame. The free is now
+  enqueued on the same serial queue that issues every poll and cancel, which is
+  what the host probe checks first.
+- **`RustFutureHandle` is a non-Sendable raw pointer**: the deferred free must
+  therefore capture an immutable box that owns it, not the pointer itself, or
+  Swift 6 rejects the closure. The probe and the GREEN generator assertion both
+  fail closed if that box disappears.
 - CI minutes: each candidate job is long; every iteration must publish enough
   diagnostics to avoid a blind second attempt.
 - `spikes/` is candidate-only. If the result is KEEP or DEFER, the spike and its

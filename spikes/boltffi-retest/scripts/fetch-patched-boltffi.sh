@@ -13,6 +13,8 @@
 #                             PREFIX (repeatable). Used to build the RED runtime
 #                             for a single patch: same generator, one fix removed.
 #
+# Patches are cumulative and their file names fix the order (0001 .. 0004).
+#
 # Emits machine-readable provenance lines (BOLTFFI_BASE=, BOLTFFI_PATCH_SHA256=,
 # ...) on stdout so a CI step can publish them as evidence.
 set -euo pipefail
@@ -143,12 +145,25 @@ if [ "$SKIP_PATCHES" -eq 1 ]; then
   exit 0
 fi
 
-# --- 3. fail closed before mutating anything ---
+# --- 3. fail closed, cumulatively ---
+# Patches build on each other: 0004 edits the same file as 0001, so checking
+# every patch against the *pristine* tree would reject a correct patch set. Each
+# patch is therefore checked against the tree as the earlier ones left it, and a
+# failure rolls the checkout back so a failed run never leaves a half-patched
+# generator behind for the next step to build from.
 for patch in "${patches[@]}"; do
-  git apply --check -- "$patch"
-done
-for patch in "${patches[@]}"; do
-  git apply -- "$patch"
+  if ! git apply --check -- "$patch"; then
+    echo "patch $(basename -- "$patch") does not apply on top of the patches before it" >&2
+    git checkout --quiet -- .
+    echo "BOLTFFI_APPLIED=none (checkout rolled back to ${BASE_SHA})" >&2
+    exit 1
+  fi
+  if ! git apply -- "$patch"; then
+    echo "patch $(basename -- "$patch") failed to apply after passing its check" >&2
+    git checkout --quiet -- .
+    echo "BOLTFFI_APPLIED=none (checkout rolled back to ${BASE_SHA})" >&2
+    exit 1
+  fi
   echo "BOLTFFI_APPLIED=$(basename -- "$patch")"
 done
 

@@ -417,15 +417,25 @@ jobs:
           fi
           python3 - "$log" <<'PY'
           import re, sys
-          lines = open(sys.argv[1], errors="replace").read().splitlines()
-          hits = [ln for ln in lines if re.search(r"sendable", ln, re.I)]
+          
+          def encode(lines):
+              """One annotation body: %25-escaped, %0A-joined, so the reader sees newlines."""
+              return "%0A".join(ln.replace("%", "%25") for ln in lines)
+          
+          report = open(sys.argv[1], errors="replace").read().splitlines()
+          hits = [ln for ln in report if re.search(r"sendable", ln, re.I)]
           if len(hits) < 2:
-              print("::error title=BoltFFI Swift 6 RED was not the Sendable defect::the unpatched generated Swift failed to compile, but not with the non-Sendable diagnostics patch 0001 addresses.")
-              print("\\n".join(ln for ln in lines if "error:" in ln)[:900])
+              # Distinguish 'the probe found no generated Swift' from 'the compiler
+              # failed for another reason': both fail the job, but only the second is a
+              # statement about BoltFFI.
+              harness = [ln for ln in report if ln.startswith("SWIFT_TYPECHECK_MISSING")]
+              head = ("the probe found no generated Swift to compile" if harness
+                      else "the unpatched generated Swift failed, but not with the non-Sendable diagnostics patch 0001 addresses")
+              body = encode([head] + (harness or []) + report[-18:])
+              print("::error title=BoltFFI Swift 6 RED was not the Sendable defect::" + body[:900])
               raise SystemExit(1)
-          body = "unpatched v0.30.1 rejected by -swift-version 6:\\n" + "\\n".join(hits[:6])
-          body = body.replace("%", "%25").replace("\\r", "%0D").replace("\\n", "%0A")[:900]
-          print("::notice title=BoltFFI Swift 6 RED (unpatched)::" + body)
+          print("::notice title=BoltFFI Swift 6 RED (unpatched)::"
+                + encode(["unpatched v0.30.1 rejected by -swift-version 6"] + hits[:6])[:900])
           PY
           mv spikes/boltffi-retest/generated spikes/boltffi-retest/generated-unpatched
 
@@ -453,19 +463,23 @@ jobs:
           fi
           python3 - "$log" <<'PY'
           import re, sys
-          text = open(sys.argv[1], errors="replace").read()
-          hits = [ln.strip() for ln in text.splitlines()
+          
+          def encode(lines):
+              return "%0A".join(ln.replace("%", "%25") for ln in lines)
+          
+          report = open(sys.argv[1], errors="replace").read().splitlines()
+          hits = [ln.strip() for ln in report
                   if re.search(r"poll after free|double free|free inside a native|BOLT_LIFETIME", ln)]
-          if not any(
-              "poll after free" in ln or "double free" in ln or "free inside a native" in ln
-              for ln in hits
-          ):
-              print("::error title=BoltFFI lifetime RED failed for the wrong reason::the probe failed without recording a lifetime violation (build or harness problem).")
-              print("\\n".join(ln for ln in text.splitlines() if "error:" in ln)[:900])
+          violation = any("poll after free" in ln or "double free" in ln or "free inside a native" in ln
+                          for ln in hits)
+          if not violation:
+              # A failure that is not a recorded lifetime violation is a harness or build
+              # result; say so instead of claiming the runtime was caught.
+              print("::error title=BoltFFI lifetime RED failed for the wrong reason::"
+                    + encode(["the probe failed without recording a lifetime violation"] + report[-16:])[:900])
               raise SystemExit(1)
-          body = "pre-0004 generated runtime, model of the Rust future contract:\\n" + "\\n".join(hits[:12])
-          body = body.replace("%", "%25").replace("\\r", "%0D").replace("\\n", "%0A")[:900]
-          print("::notice title=BoltFFI lifetime RED (pre-0004)::" + body)
+          print("::notice title=BoltFFI lifetime RED (pre-0004)::"
+                + encode(["pre-0004 generated runtime, model of the Rust future contract"] + hits[:12])[:900])
           PY
           rm -rf spikes/boltffi-retest/generated
 
@@ -553,11 +567,14 @@ jobs:
           fi
           python3 - "$log" <<'PY'
           import sys
-          text = open(sys.argv[1], errors="replace").read()
-          hits = [ln.strip() for ln in text.splitlines() if "BOLT_LIFETIME" in ln]
-          body = "patched runtime, same probe as the RED run:\\n" + "\\n".join(hits[:6])
-          body = body.replace("%", "%25").replace("\\r", "%0D").replace("\\n", "%0A")[:900]
-          print("::notice title=BoltFFI lifetime GREEN (patched)::" + body)
+          
+          def encode(lines):
+              return "%0A".join(ln.replace("%", "%25") for ln in lines)
+          
+          report = open(sys.argv[1], errors="replace").read().splitlines()
+          hits = [ln.strip() for ln in report if "BOLT_LIFETIME" in ln]
+          print("::notice title=BoltFFI lifetime GREEN (patched)::"
+                + encode(["patched runtime, same probe as the RED run"] + hits[:6])[:900])
           PY
 
       - name: 'Differential probe - is T: Sendable required? (non-gating)'
@@ -636,13 +653,16 @@ jobs:
           fi
           python3 - "$log" <<'PY'
           import sys
-          text = open(sys.argv[1], errors="replace").read()
-          keep = [ln.strip() for ln in text.splitlines()
-                  if any(k in ln for k in ("BOLT_PROOF", "BOLT_ERR", "BOLT_BACKLOG", "BOLT_BOUNDED",
-                                           "BOLT_CANCEL", "BOLT_LIFETIME", "Executed ", "Test run with"))]
-          body = "patched candidate, real Rust, real simulator:\n" + "\n".join(keep[-14:])
-          body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[:900]
-          print("::notice title=BoltFFI Apple native result::" + body)
+          
+          def encode(lines):
+              return "%0A".join(ln.replace("%", "%25") for ln in lines)
+          
+          report = open(sys.argv[1], errors="replace").read().splitlines()
+          keys = ("BOLT_PROOF", "BOLT_ERR", "BOLT_BACKLOG", "BOLT_BOUNDED", "BOLT_CANCEL",
+                  "BOLT_LIFETIME", "Executed ", "Test run with")
+          keep = [ln.strip() for ln in report if any(k in ln for k in keys)]
+          print("::notice title=BoltFFI Apple native result::"
+                + encode(["patched candidate, real Rust, real simulator"] + keep[-14:])[:900])
           PY
 
       - name: 'Sendable probe - class-returning async API (characterization, non-gating)'
@@ -663,31 +683,35 @@ jobs:
           tail -n 30 "$log"
           python3 - "$status" <<'PY'
           import re, sys
+          
+          def encode(lines):
+              return "%0A".join(ln.replace("%", "%25") for ln in lines)
+          
+          def emit(title, lines):
+              print(f"::notice title={title}::" + encode(lines)[:900])
+          
           status = int(sys.argv[1])
-          lines = open("sendable-probe.log", errors="replace").read().splitlines()
-
-          def emit(title, body):
-              body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[:900]
-              print(f"::notice title={title}::{body}")
-
-          generated = [ln for ln in lines if "SWIFT_TYPECHECK_FILE=" in ln]
+          report = open("sendable-probe.log", errors="replace").read().splitlines()
+          generated = [ln for ln in report if "SWIFT_TYPECHECK_FILE=" in ln]
           if not generated:
-              tail = "\n".join(lines[-8:])
+              # No generated Swift for this shape: a characterization result, not a
+              # candidate failure. Say which reason it was.
+              missing = [ln for ln in report if "SWIFT_TYPECHECK_MISSING" in ln]
               emit("BoltFFI Sendable probe: shape not offered at this pin",
-                   "the generator did not produce Swift for an async method returning an exported class "
-                   "(upstream main d5eba2e3 adds shared class handles as async *parameters*; a class result is "
-                   "a separate question):\n" + tail)
+                   ["the generator produced no Swift for an async API whose result is an exported class",
+                    "(upstream main d5eba2e3 adds shared class handles as async *parameters*; a class result is a separate question)"]
+                   + (missing or []) + report[-8:])
               raise SystemExit(0)
-          sendable = [ln for ln in lines if re.search(r"sendable|non-conforming|does not conform", ln, re.I)]
-          errors = [ln for ln in lines if "error:" in ln]
+          sendable = [ln for ln in report if re.search(r"sendable|non-conforming|does not conform", ln, re.I)]
+          errors = [ln for ln in report if "error:" in ln]
           if status == 0:
               emit("BoltFFI Sendable probe: PASS",
-                   "the generated Swift for an async class-returning API type-checks under -swift-version 6; "
-                   "the T: Sendable constraint does not block this shape.")
+                   ["the generated Swift for an async class-returning API type-checks under -swift-version 6;",
+                    "the T: Sendable constraint does not block this shape"] + generated[:2])
           else:
-              emit("BoltFFI Sendable probe: known #778 boundary",
-                   f"swiftc exit {status}; the class-returning async API does not compile under Swift 6:\n"
-                   + "\n".join((sendable or errors)[:6]))
+              emit("BoltFFI Sendable probe: class-handle boundary",
+                   [f"swiftc exit {status}; the class-returning async API does not compile under Swift 6"]
+                   + (sendable or errors)[:6])
           PY
 
       - name: Upload candidate Apple evidence
