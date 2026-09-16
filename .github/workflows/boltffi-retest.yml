@@ -283,6 +283,36 @@ jobs:
           cd spikes/boltffi-retest
           mv generated generated-patched
           mv generated-unpatched generated
+          # The deterministic half of the RED/GREEN contrast. Swapping whole
+          # generated trees and observing a crash is a *race*: run 35111780326 and
+          # 35108329894 both hit the same post-close rejection in both trees, because
+          # the unpatched template's check-then-act usually wins the check. The
+          # contract difference is nevertheless exact and build-level: patch 0002
+          # adds the in-flight counter (__boltffi_calls) and the retain/release pair
+          # to the generated Kotlin, and the unpatched template has none of them -
+          # every entry point reads boltffiHandle() directly.
+          python3 - <<'PY'
+          import pathlib, sys
+
+          def tokens(tree):
+              found = set()
+              for path in pathlib.Path(tree).rglob("*.kt"):
+                  text = path.read_text(errors="replace")
+                  for token in ("__boltffi_calls", "boltffiRetain", "boltffiRelease", "boltffiHandle()"):
+                      if token in text:
+                          found.add(token)
+              return found
+
+          unpatched, patched = tokens("generated"), tokens("generated-patched")
+          print("::notice title=BoltFFI Android contract shapes::"
+                f"unpatched={sorted(unpatched)} patched={sorted(patched)}")
+          missing = {"__boltffi_calls", "boltffiRetain", "boltffiRelease"} - patched
+          if missing:
+              sys.exit(f"patched tree is missing the in-flight counter: {sorted(missing)}")
+          leaked = {"__boltffi_calls", "boltffiRetain", "boltffiRelease"} & unpatched
+          if leaked:
+              sys.exit(f"the unpatched tree already carries the counter: {sorted(leaked)}")
+          PY
           set +e
           bash scripts/android-emulator-proof.sh red- >red-probe.log 2>&1
           status=$?
@@ -348,7 +378,10 @@ jobs:
           ]
           keys = ("BOLT_", "OK (1 test)", "FAILURES", "INSTRUMENTATION_", "ANDROID_",
                   "error:", "ERROR", "PANIC", "Exception", "Use after free", "SIGSEGV",
-                  "Unknown AVD", "ANDROID_NATIVE_PROOF")
+                  "Unknown AVD", "ANDROID_NATIVE_PROOF",
+                  # the frames are the attribution: a throw site inside the generated
+                  # `boltffiRetain` guard is the patched rejection; a native frame is not
+                  "at dev.greenfield5", "Caused by")
           missing = []
           for name in logs:
               path = pathlib.Path("spikes/boltffi-retest") / name
@@ -499,6 +532,7 @@ jobs:
           rm -rf spikes/boltffi-retest/generated
 
       - name: Patched generator (GREEN)
+        id: green
         run: |
           set -euo pipefail
           log=green-generation.log
@@ -621,8 +655,13 @@ jobs:
         run: |
           set -euo pipefail
           cd spikes/boltffi-retest
+          # Start from the patched tree. The prep here still copied the *unpatched*
+          # tree, so the token it looks for (`func boltffiAsyncCall<T: Sendable>(`,
+          # which patch 0001 adds) was absent, the preparation exited non-zero, and
+          # `continue-on-error: true` reported the step as a success with no result.
+          # A non-gating probe must still be an executed probe.
           rm -rf generated
-          cp -R generated-unpatched generated
+          cp -R generated-patched generated
           python3 - <<'PY'
           import pathlib, sys
           # Patched runtime with one token removed: is `T: Sendable` load-bearing on
@@ -660,12 +699,20 @@ jobs:
                      if status != 0 else
                      "the constraint is NOT required at this pin, so patch 0001 must be narrowed to the two @Sendable annotations")
                   + "\n" + "\n".join(evidence))
-          body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[:900]
-          print("::notice title=BoltFFI differential (params only)::" + body)
+          # Published once, by the diagnostics step: per-step notices compete for
+          # the same annotation budget as the per-log evidence, and run 35111780326
+          # lost both probe results that way.
+          open("differential-summary.txt", "w").write(body)
+          print(body)
           PY
 
       - name: Restore the patched generation
-        if: always()
+        # Only meaningful when the GREEN generation actually ran. `always()` on its
+        # own made a *cancelled* job publish
+        # "::error BoltFFI generation missing: generated-patched holds no generated
+        # Swift" (run 35111696234: cancelled in the RED step by a newer head's run),
+        # which reads like a generation defect instead of a cancellation.
+        if: always() && steps.green.outcome == 'success'
         run: |
           set -euo pipefail
           cd spikes/boltffi-retest
@@ -678,6 +725,11 @@ jobs:
           fi
           rm -rf generated
           cp -R generated-patched generated
+
+      - name: Patched generation unavailable
+        if: always() && steps.green.outcome != 'success'
+        run: |
+          echo "::notice title=BoltFFI GREEN generation did not run::steps.green outcome='${{ steps.green.outcome }}' (cancelled, failed, or skipped): the native Xcode run has no patched sources to build, so it is NOT EXECUTED - not a pass."
 
       - name: Xcode build and native tests
         run: |
@@ -732,7 +784,12 @@ jobs:
               return "%0A".join(ln.replace("%", "%25") for ln in lines)
           
           def emit(title, lines):
-              print(f"::notice title={title}::" + encode(lines)[:900])
+              # Written to a file as well: the diagnostics step publishes the probe
+              # summaries in one notice, because per-step notices compete for the
+              # same annotation budget and had already been dropped in run 35111780326.
+              body = encode(lines)[:900]
+              open("sendable-summary.txt", "w").write(title + "\\n" + body.replace("%0A", "\\n"))
+              print(f"::notice title={title}::" + body)
           
           status = int(sys.argv[1])
           report = open("sendable-probe.log", errors="replace").read().splitlines()
@@ -787,38 +844,43 @@ jobs:
           import pathlib, re
 
           def encode(lines):
-              """One annotation body: %25-escaped, %0A-joined, capped per log."""
               return "%0A".join(ln.replace("%", "%25") for ln in lines)
 
-          # One notice per log, so no single file can push another out of the
-          # annotation budget: the first version of this step kept only the last
-          # 2400 characters of the concatenation and silently hid exactly the file
-          # that had failed.
+          # Priority order, and only the first eight are published: annotations compete for
+          # one per-run budget (run 35111780326 silently dropped both non-gating probe
+          # results), so the deciding files come first and the probes get one shared notice.
           logs = [
-              "lifetime-green.log", "xcode-test.log", "green-typecheck.log",
-              "spikes/boltffi-retest/apple-test.log", "spikes/boltffi-retest/apple-test-build.log",
-              "spikes/boltffi-retest/apple-lifetime.log",
-              "spikes/boltffi-retest/apple-lifetime-build.log",
-              "red-typecheck.log", "lifetime-red.log", "green-generation.log",
-              "red-generation.log", "differential.log", "sendable-probe.log",
-              "spikes/boltffi-retest/typecheck-unpatched.log",
+              "xcode-test.log", "lifetime-green.log", "lifetime-red.log",
+              "red-typecheck.log", "green-typecheck.log",
+              "differential.log", "sendable-probe.log",
+              "spikes/boltffi-retest/apple-test.log",
+              "green-generation.log", "spikes/boltffi-retest/typecheck-unpatched.log",
               "spikes/boltffi-retest/typecheck-patched.log",
-              "spikes/boltffi-retest/sendable-probe/typecheck-class-returning.log",
           ]
           pattern = (r"BOLT_|Executed [0-9]+ test|OK \(1 test\)|error:|VIOLATION|"
                      r"SWIFT_TYPECHECK|cannot find|Testing failed|No such file|"
                      r"failed|ANDROID_|INSTRUMENTATION")
-          missing = []
+          published, present, missing = [], [], []
           for name in logs:
               path = pathlib.Path(name)
               if not path.exists():
                   missing.append(name)
                   continue
+              present.append(name)
+              if len(published) >= 8:
+                  continue
               lines = path.read_text(errors="replace").splitlines()
               keep = [ln for ln in lines if re.search(pattern, ln, re.I)] or lines[-12:]
-              print("::notice title=BoltFFI Apple " + name + "::"
-                    + encode(keep[-14:])[:900])
-          if missing:
-              print("::notice title=BoltFFI Apple logs missing::"
-                    + ", ".join(missing))
+              print("::notice title=BoltFFI Apple " + name + "::" + encode(keep[-14:])[:900])
+              published.append(name)
+          probes = []
+          for name in ("differential-summary.txt", "sendable-summary.txt"):
+              path = pathlib.Path(name)
+              if path.exists():
+                  probes.append(path.read_text(errors="replace").strip())
+          if probes:
+              print("::notice title=BoltFFI probes (non-gating)::"
+                    + encode("\n".join(probes).splitlines())[:900])
+          print("::notice title=BoltFFI Apple evidence files::present=" + ", ".join(present)
+                + " | published=" + str(len(published)) + " | missing=" + ", ".join(missing))
           PY

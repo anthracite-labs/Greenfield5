@@ -718,3 +718,35 @@ and a 60-second sustained run. No real capture, pairing, audio UX, browser relay
 or rooms. Physical-device results remain **UNVERIFIED — PHYSICAL DEVICE REQUIRED**
 until actually observed. The BoltFFI deferred-fix rerun is a trigger, not a
 second immediate PR recommendation.
+
+## BoltFFI candidate retest - executed results (2026-09-16, PR #19)
+
+Immutable upstream refs re-checked this session: boltffi v0.30.1 =
+`2e6320a6d92cb591d22b908477f3a47da7ebc9bc` (newest tag); `origin/main` =
+`932107ba`, and `git diff --name-only v0.30.1 origin/main` over
+`boltffi_backend/{templates,src}/target/{swift,kotlin}` and
+`boltffi_core/src/runtime` is **empty**, so the pin still covers every surface
+patched here. Open upstream: PR #732 head `1b4b0d79e658`, 31 files, newest review
+`4b25c777` **CHANGES_REQUESTED** (2026-08-01); issues #664 and #778 open; adjacent
+#770/#889/#893. Fix `b01038ef35…` present in both the tag and main.
+
+Executed on this candidate (run `35111780326`, head `97a4924`):
+
+| Acceptance area | Result | Evidence |
+| --- | --- | --- |
+| Swift 6 RED (unpatched) | FAILS as required | `SWIFT_TYPECHECK_unpatched_EXIT=1`, `:702:13`/`:703:13` non-Sendable capture in `@Sendable` closure |
+| Swift 6 GREEN (patched, same probe) | PASSES | `SWIFT_TYPECHECK_patched_EXIT=0` |
+| Lifetime RED (pre-0004 runtime) | 2 violations, 2 named tests | `VIOLATION(free inside a native call; free inside a native callback)` |
+| Lifetime GREEN (0004 v3) | clean, 6/6 probes | `free-once=true`, `frees=1` per probe, `violations=0` |
+| Apple native contract/async/streams/layout/errors | PASSES | `Test run with 19 tests passed`; `BOLT_PROOF`, `BOLT_BOUNDED batch 100/100/0`, `BOLT_CANCEL 32/32` |
+| Apple ownership/cancellation | PASSES | `BOLT_LIFETIME repeatedCancellation=clean`, `preCancelled=clean`, `wakeDrivenRepoll=clean polls=2 displacements=1` |
+| Stream backpressure | bounded path executed, unbounded path recorded | `BOLT_BOUNDED policy=batch produced=100 consumed=100 nativeDropped=0 hostBuffered=0` vs `BOLT_BACKLOG policy=unbounded ... hostBuffered=80` |
+| Android Kotlin → generated → JNI → Rust | EXECUTES | `OK (1 test)`, `BOLT_PROOF ... async=PASS cancellation=PASS repeated_cancel=100 raced_cancel=100`, `BOLT_STREAM produced=200 consumed=26 nativeDropped=98 unconsumed=76` |
+| Android close-race suite | NOT PASSING YET | test treated the required post-close rejection as a crash (`ConcurrentCloseTest.kt:97`); corrected, rerun pending |
+| #778-shaped async (class-returning) Sendable | characterization | non-gating probe; result published by the diagnostics step |
+| Physical device | **UNVERIFIED — PHYSICAL DEVICE REQUIRED** | no physical-device run in this environment |
+
+The candidate's ownership invariant, now stated in one line and enforced by patch
+0004 v3: `rust_future_free(handle)` runs exactly once, never inside a native call or
+a runtime-delivered callback, and always before the caller is resumed. The
+previous behavior is what the pre-patch run recorded.

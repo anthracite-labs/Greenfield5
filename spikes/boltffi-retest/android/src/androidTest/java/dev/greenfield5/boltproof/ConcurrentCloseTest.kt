@@ -94,7 +94,19 @@ class ConcurrentCloseTest {
             probe.close()
             probe.close()
             probe.close()
-            probe.release()
+            // `release()` is an ordinary generated method, and after close() every
+            // entry point is *required* to be rejected - that is the contract patch
+            // 0002 (upstream #732) implements in the generated Kotlin retain guard.
+            // Treating the rejection as a crash is what failed this suite in run
+            // 35111780326: the generated guard threw before any native call, which is
+            // the safe outcome, not a defect. The unpatched build has no counter
+            // (check-then-act), so there the same line reaches native with a stale
+            // handle - the assertion below only accepts *no* other exception.
+            try {
+                probe.release()
+            } catch (expected: IllegalStateException) {
+                rejected.incrementAndGet()
+            }
             worker.join(3000)
             check(failed.get() == null) { "unexpected async exception: ${failed.get()}" }
             check(!worker.isAlive) { "async call did not drain" }

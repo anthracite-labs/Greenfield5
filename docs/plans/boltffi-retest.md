@@ -157,9 +157,9 @@ patch closes it), **N-A** (the shape does not exist at this pin), or
 | 9 | close / repeated close (Kotlin) | the object's initial reference | - | - | `close()` = `compareAndSet(false, true)` then one `boltffiRelease()`; later closes are no-ops | yes | **patched** (0002) |
 | 10 | call after close (Kotlin) | - | `boltffiRetain()` throws `IllegalStateException` before any native call | - | - | yes (`stateCode` after close in the contract suite) | **patched** (0002) |
 | 11 | receiver sync/async call (Swift) | the generated class instance's `handle`; ARC | none needed - the caller's reference is live for the call | `deinit` cannot run while the caller holds the instance | `deinit { release(handle) }`, exactly once by ARC | yes | **safe** (no explicit `close()`, so no close race exists on Apple) |
-| 12 | async call, future handle (Swift) | `BoltFFIFutureLifetime` (one raw handle + the `@Sendable` free) | the call takes the handle `Arc::into_raw` in `rust_future_new` returned | the *old* driver freed it from the Ready path, the error path and both cancellation branches while a `Task`-scheduled re-poll could still run (mechanism A) and while the runtime was inside its own `poll` frame (mechanism B) | `deinit`, once, enqueued on the call's serial `DispatchQueue` after every poll/cancel issued for that call | yes - this is `BoltOwnership.repeatedCancellation`, the SIGSEGV | **patched** (0004; the 0001 pair only made it compile) |
+| 12 | async call, future handle (Swift) | `BoltFFIFutureLifetime` (one raw handle + the `@Sendable` free) | the call takes the handle `Arc::into_raw` in `rust_future_new` returned | the *old* driver freed it from the Ready path, the error path and both cancellation branches while a `Task`-scheduled re-poll could still run (mechanism A) and while the runtime was inside its own `poll` frame (mechanism B); v2's deferred free had no window but let the future outlive the call | `Owner.freeOnQueue()` - queue-confined and idempotent - called from the terminal step *before* the caller is resumed (v3); `deinit` is only a last chance | yes - this is `BoltOwnership.repeatedCancellation`, the SIGSEGV | **patched** (0004 v3; the 0001 pair only made it compile, v2 was safe but not observable) |
 | 13 | stream subscribe / batch pull / cancellable (Swift) | the subscription class holds the subscription `handle`; ARC | subscribe call | `cancel()` from another thread | `deinit { free(handle) }`; the cancellable's `cancel()` is flag-guarded and idempotent | yes (`events`, `eventsBatch`, `boundedBatch`) | **safe** (ARC single owner; no close-vs-call race by construction) |
-| 14 | repeated cancellation / cancel after completion (Swift) | `BoltFFIFutureState` (`BoltFFIFutureState.finish()` is a single atomic exchange) | - | - | terminal state is consumed once; the second `finish()` returns `.finished` and neither resumes nor frees | yes (`repeatedCancellation`, `cancellationRacingReadiness`) | **patched** (0004 keeps the atomic arbitration and removes every other free) |
+| 14 | repeated cancellation / cancel after completion (Swift) | `BoltFFIFutureState` (`BoltFFIFutureState.finish()` is a single atomic exchange) | - | - | terminal state is consumed once; the second `finish()` returns `.finished` and neither resumes nor frees; the winner's terminal step cancels, frees, then resumes, in that order, on the call's queue | yes (`repeatedCancellation`, `cancellationRacingReadiness`) | **patched** (0004 v3: atomic arbitration unchanged, every free funnelled through the one idempotent site) |
 
 **What this audit does not claim.** Only paths 1-4, 9-10 (Kotlin) and 11-14
 (Swift) are executed by this spike. Path 5 remains an upstream-acknowledged
@@ -215,6 +215,92 @@ Every entry is an executed CI run of `.github/workflows/boltffi-retest.yml` on
 this branch. Raw job logs are not retrievable from the sandbox, so each step also
 publishes annotations (`::notice` / `::error`); those annotations, plus the
 artifact set, are what is quoted here.
+
+**Run `35111780326` (head `97a4924`) - Apple native GREEN, on the same 19 tests that
+failed before; Android executes and its close-race expectation is corrected.**
+
+Jobs: Rust `104847425592` **success**; Apple `104847425246` **success**; Android
+`104847425692` **failure** (close-race suite, cause below).
+
+*Swift 6 pair, both sides executed.* RED: `SWIFT_TYPECHECK_unpatched_EXIT=1`,
+`:702:13` and `:703:13`, "capture of 'cancel'/'free' with non-sendable type
+`(RustFutureHandle?) -> Void` ... in a '@Sendable' closure". GREEN:
+`SWIFT_TYPECHECK_patched_EXIT=0` on the patched generator. Same probe, same flags
+(`-swift-version 6 -parse-as-library`), same generated file, so the pair now
+decides something instead of being asserted as text.
+
+*Lifetime pair, both sides executed.* RED (pre-0004 runtime):
+`completionInsidePollFrame=VIOLATION(free inside a native call; free inside a native
+callback) ... violations=2` and `wakeDrivenRepoll=VIOLATION(...) ... violations=2`,
+two named tests failing (`completionInsideThePollFrameNeverFreesTheFuture`,
+`wakeDrivenRepollNeverOutlivesTheFree`), 8 tests in the probe run. GREEN (0004 v3):
+all six scenarios `clean ... violations=0`, with the counts that make the claim
+falsifiable - `completionInsidePollFrame=clean free-once=true polls=1 completes=1
+frees=1`, `cancellationOfParkedCall=clean polls=1 cancels=1 frees=1`,
+`wakeDrivenRepoll=clean polls=2 completes=1 frees=1 displacements=1`,
+`repeatedCancellation=clean`, `preCancelled=clean`. The one non-clean line is
+recorded as observed upstream behaviour, not a candidate result:
+`displacement-completed-a-pending-future=observed(upstream policy)`.
+
+*Apple native result - `+1.167 s, 19 tests, all passed`, on real Rust:*
+
+```
+Test run with 19 tests passed after 1.167 seconds.
+BOLT_PROOF version=0.1.0 sender=PASS viewer=PASS typed_errors=PASS layout=PASS
+BOLT_ERR typed=BridgeError delivered=true
+BOLT_BACKLOG policy=unbounded produced=100 nativeDropped=0 consumed=20 hostBuffered=80
+BOLT_BOUNDED policy=batch produced=100 consumed=100 nativeDropped=0 hostBuffered=0
+BOLT_CANCEL consumedAfterCancel=32 consumedAfterMore=32
+BOLT_LIFETIME completionInsidePollFrame=clean free-once=true polls=1 completes=1 frees=1
+BOLT_LIFETIME cancellationOfParkedCall=clean polls=1 cancels=1 frees=1
+BOLT_LIFETIME wakeDrivenRepoll=clean polls=2 completes=1 displacements=1
+BOLT_LIFETIME repeatedCancellation=clean / preCancelled=clean
+```
+
+This is the same suite that failed at `c260caf` with 45 + 4
+`(probe.active() -> 1) == 0` ownership issues: 0004 v3's free-before-resume removed
+the window between the caller being resumed and the native future being freed. The
+lifetime probe's own assertions are unchanged between the two runs, so the
+difference is the runtime, not the test.
+
+Recorded honestly, not as a pass:
+* `BOLT_BACKLOG policy=unbounded ... hostBuffered=80` - the unbounded host path is
+  still unbounded; the *bounded* claim rests on `BOLT_BOUNDED policy=batch
+  100/100/0/0`, which executed.
+* `BOLT_CANCEL consumedAfterCancel=32 consumedAfterMore=32` - the subscription does
+  not grow after cancellation, measured, not inferred.
+
+*Android, the close-race expectation was wrong.* Debug APK + instrumentation APK
+built and installed, boot 20 s, KVM usable, and the contract suite ran through
+Kotlin -> generated -> JNI -> Rust with markers:
+`BOLT_PROOF version=0.1.0 sender=PASS viewer=PASS typed_errors=PASS layout=PASS
+async=PASS cancellation=PASS repeated_cancel=100 raced_cancel=100 batch=8/100
+dropped=92` and `BOLT_STREAM produced=200 consumed=26 nativeDropped=98
+unconsumed=76`. The close suite then failed at `ConcurrentCloseTest.kt:97`
+(`java.lang.IllegalStateException: AsyncProbe is closed` thrown from
+`AsyncProbe.boltffiRetain$boltffi_android_proof`): the test called `release()`
+after `close()` and treated the rejection as a crash. Rejection after close *is*
+the contract patch 0002 (upstream #732) implements, so the test now expects it, and
+the RED/GREEN contrast for Android no longer rests on a race: the unpatched
+generated Kotlin has no counter at all (`__boltffi_calls`, `boltffiRetain`,
+`boltffiRelease` = 0 occurrences; every entry point reads `boltffiHandle()`), while
+the patched tree has all three - asserted by token, per build.
+
+*Two harness defects this run exposed, both fixed:*
+  1. `concurrency: cancel-in-progress` on `boltffi-retest-${{ github.ref }}` means a
+     push cancels the in-flight run. The head push cancelled its own predecessor
+     mid-RED, and the `if: always()` restore step then published
+     `::error BoltFFI generation missing`, which reads like a generation defect
+     under a half-built workspace. The restore step is now gated on
+     `steps.green.outcome == 'success'`, and a companion step states plainly that
+     the native run is NOT EXECUTED when GREEN did not run.
+  2. The `T: Sendable` differential still started from the *unpatched* tree, so the
+     token it removes was absent, the preparation exited non-zero, and
+     `continue-on-error: true` reported a success with no result. It now starts
+     from the patched tree; the probe summaries are written to files and published
+     in one notice, because per-step notices compete for one annotation budget
+     (both probe results were dropped in `35111780326`).
+
 
 **Run `35108329894` (head `c260caf`) - both RED/GREEN pairs executed; one real
 candidate difference found, in the cancellation path.**

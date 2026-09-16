@@ -729,3 +729,63 @@ routing, not a blocker. Source investigation ties Swift diagnostic to exact tag.
 retaining UniFFI. Leave PR #18 open for independent review. Physical results stay
 UNVERIFIED — PHYSICAL DEVICE REQUIRED. Deferred BoltFFI fix is a later rerun
 trigger, not a second immediate PR.
+
+## 2026-09-16 — BoltFFI retest (PR #19): Swift async ownership RED→GREEN, Android real JNI executes
+
+Continuation of the prior-art-grounded patched-candidate retest on PR #19
+(`arena/01a0a9b5-greenfield5`), against pinned BoltFFI v0.30.1
+`2e6320a6d92cb591d22b908477f3a47da7ebc9bc`. Production UniFFI 0.32.1 and ADR-0007
+untouched; no upstream issue or PR submitted.
+
+**Verified (exact-head CI, output read back as annotations):**
+Run `35111780326` at `97a4924` — Apple job `104847425246` **success**: `Test run with
+19 tests passed` on real Rust in a real simulator, with `BOLT_PROOF
+sender/viewer/typed_errors/layout PASS`, `BOLT_ERR typed=BridgeError delivered=true`,
+`BOLT_BOUNDED policy=batch 100/100/0`, `BOLT_BACKLOG policy=unbounded 100/0/20/80`,
+`BOLT_CANCEL consumedAfterCancel=32 consumedAfterMore=32`, and all six
+`BOLT_LIFETIME ... clean ... violations=0` lines. The same suite failed at `c260caf`
+with 45 + 4 `(probe.active() -> 1) == 0` ownership issues; the tests did not change,
+the runtime did (patch 0004 v3).
+Swift 6 pair, both sides executed at that head:
+`SWIFT_TYPECHECK_unpatched_EXIT=1` at `:702:13`/`:703:13` (non-Sendable capture in a
+`@Sendable` closure) versus `SWIFT_TYPECHECK_patched_EXIT=0`.
+Lifetime pair, both sides executed: pre-0004 runtime
+`VIOLATION(free inside a native call; free inside a native callback)` in
+`completionInsideThePollFrameNeverFreesTheFuture` and `wakeDrivenRepollNeverOutlivesTheFree`;
+0004 v3 clean on all six probes with `free-once=true` and `frees=1` each.
+Android job `104847425692`: debug APK + instrumentation APK built, installed, boot
+20 s, KVM usable, contract suite executed through Kotlin → generated → JNI → Rust
+with `BOLT_PROOF ... async=PASS cancellation=PASS repeated_cancel=100 raced_cancel=100`
+and `BOLT_STREAM produced=200 consumed=26 nativeDropped=98 unconsumed=76`; the close
+suite failed at `ConcurrentCloseTest.kt:97` calling `release()` after `close()`,
+which patch 0002 (upstream #732) *requires* to be rejected.
+Rust job `104847425592` success. Verify run `35111780449` success (both required
+contexts); `35108329848` (verify at `c260caf`) re-read: success.
+
+**Changed:** patch 0004 v3 (SHA-256 `3d00887f…`) makes the Swift async runtime free
+the raw future on the call's serial queue *before* resuming the caller:
+`Owner.freeOnQueue()` is queue-confined and idempotent, `terminal(cancel:then:)` is
+the single free-then-resume step, `deinit` is only a last chance. Patch 0002 stays
+byte-for-byte PR #732 (`44265dc8…`). Harness: per-invocation (truncating) logs and
+per-mode logs; `-parse-as-library` for the standalone probe plus a Swift 6 GREEN
+typecheck; differential rebased onto the patched tree; cancellation-aware restore
+guard; Android marker greps read logcat as well as the runner output; Android RED
+asserts the counter tokens per build instead of relying on a race; diagnostics
+publish one notice per log inside the annotation budget.
+
+**Dead ends / corrected:** the `(probe.active() == 0)` failures were a real
+candidate difference (v2's deferred free let a native future outlive its call), not
+a test artifact — fixed in the runtime, not by relaxing the test. The "close race
+crash" expectation on Android was wrong: the patched build rejects deterministically
+instead of crashing, in both trees, so the RED/GREEN contrast is now asserted by
+generated-token presence. `concurrency: cancel-in-progress` means a push to the
+branch cancels the in-flight run; the `if: always()` restore step then reported a
+misleading `generation missing`. `gh run cancel` is 403 for this token (read-only on
+Actions), so runs cannot be cancelled from the sandbox. A local `py_compile` check
+put `__pycache__` into a commit; removed, and `.gitignore` now covers it.
+
+**Next:** rerun at the new head to confirm Android's close-race suite executes and
+prints `BOLT_CLOSE` on debug *and* minified release, and to get an executed
+`T: Sendable` differential and the #778-shaped Sendable characterization; then
+re-triage the remaining acceptance items and finish the PR #19 handoff. Physical
+device results stay **UNVERIFIED — PHYSICAL DEVICE REQUIRED**.
