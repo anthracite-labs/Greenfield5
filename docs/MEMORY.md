@@ -967,3 +967,37 @@ PASS 16/0/2, `selftest.sh` PASS 128/128, shellcheck clean, 32 `run:` blocks pass
 decisions/**`, `core/Cargo.toml`, `core/Cargo.lock`, `rust-toolchain.toml`,
 `core/uniffi.toml`, Gradle/AGP files, generated bindings and `core/src/**` show
 an empty diff against `main`.
+
+## 2026-09-16 — CI trigger fix: stop redundant Stack runs on PR follow-ups
+
+**Problem:** GitHub Actions history showed PR #21 repeatedly launching the expensive
+`Stack` workflow for every synchronize event. Stack runs #64–#67 mapped one-for-one
+to successive PR heads; `6543d67b5...b869fa596` changed only `docs/MEMORY.md`,
+yet Stack #67 still launched because `pull_request.paths` was evaluated against
+the PR's cumulative stack-touching diff.
+
+**Change:** Issue #22 / PR #23 changes only Stack trigger semantics on top of the
+merged PR #21 tree. `.github/workflows/stack.yml` remains path-filtered but is now
+automatic on `push` for every branch plus `workflow_dispatch`; the automatic
+`pull_request` trigger and `branches: [main]` restriction are removed. PR #21's
+proven Swift Testing summary parser and ADR follow-up header corrections are
+preserved unchanged. All Rust/Android/iOS jobs, read-only permissions, pinned
+actions, and `cancel-in-progress` concurrency remain unchanged.
+
+**Verified:** Functional workflow head
+`6b75240bc3ae28b55bb5f945a84dea104eb19a07` created Stack run `35138425689`
+with event=`push`; Rust, Android, and iOS all passed. Opening PR #23 created
+verify run `35138485631` with event=`pull_request` and no Stack PR run; both
+required verify jobs passed. A later docs-only MEMORY commit advanced the branch
+to `2a8cf5451a1bd8cfe2b81d289a34ca6acdde4fc1` and created verify run
+`35138769661` (passed) but **no new Stack run**, directly proving the queue-churn
+regression is fixed.
+
+**Integration:** PR #21 merged first at
+`8fc17bb3c5131247de0c36f3f06ecda38477ce5f`, making PR #23 conflict. PR #23 was
+then reconciled with a normal merge commit (no force-push), taking merged main as
+the base tree and preserving both PR #21's F3 parser and PR #23's trigger model.
+
+**Security review:** Workflow permissions remain `contents: read`; no secrets,
+write permission, `pull_request_target`, dependency/action-pin changes, or remote
+execution were introduced.

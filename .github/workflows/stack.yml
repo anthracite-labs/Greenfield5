@@ -9,15 +9,13 @@
 # provide honest verification for the native↔Rust bridge.
 name: Stack
 
+# Stack is push-driven on every branch. GitHub evaluates pull_request path
+# filters against the PR's cumulative three-dot diff, which caused docs-only
+# follow-up commits on a stack-touching PR to relaunch this expensive workflow.
+# Push path filters use the files changed by that push, so only an actual stack
+# change starts Stack. See Issue #22.
 on:
   push:
-    branches: [main]
-    paths:
-      - core/**
-      - apps/android/**
-      - apps/ios/**
-      - .github/workflows/stack.yml
-  pull_request:
     paths:
       - core/**
       - apps/android/**
