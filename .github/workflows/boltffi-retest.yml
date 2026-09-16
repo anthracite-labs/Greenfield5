@@ -135,20 +135,39 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import pathlib, re, sys
-          files = list(pathlib.Path("spikes/boltffi-retest/generated-unpatched/kotlin").rglob("*.kt"))
+
+          def emit(kind, title, body):
+              body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::{kind} title={title}::{body[:900]}")
+
+          root = pathlib.Path("spikes/boltffi-retest/generated-unpatched")
+          files = sorted(root.rglob("*.kt"))
           if not files:
-              sys.exit("RED baseline produced no generated Kotlin")
+              tree = "\n".join(str(p) for p in sorted(root.rglob("*"))[:40]) or "directory missing"
+              emit("error", "BoltFFI RED baseline missing Kotlin", f"no .kt under {root}:\n{tree}")
+              sys.exit(1)
           text = "\n".join(f.read_text() for f in files)
-          if "boltffiRetain" in text:
-              sys.exit("RED baseline unexpectedly already contains boltffiRetain")
-          if "boltffiHandle" not in text:
-              sys.exit("RED baseline is not the expected check-then-act generation")
           close = re.search(r"override fun close\(\) \{(.*?)\n    \}", text, re.S)
-          if close is None or "Native." not in close.group(1):
-              sys.exit("RED baseline close() does not call Native directly; wrong artifact")
-          if not re.search(r"Native\.[A-Za-z_]+\([^)]*boltffiHandle\(\)", text):
-              sys.exit("RED baseline has no Native call reading boltffiHandle() directly; wrong artifact")
-          print("::notice title=BoltFFI RED baseline::unpatched v0.30.1 generated Kotlin frees through Native.<release>(handle) inside close(), passes boltffiHandle() straight into native calls, and has no in-flight counter (upstream #664).")
+          close_body = close.group(1).strip() if close else "<close() not found>"
+          native_calls = re.findall(r"Native\.[A-Za-z_]+\([^)\n]*\)", text)
+          emit("notice", "BoltFFI RED generated shapes",
+               f"files={len(files)}\nclose() body:\n{close_body}\nsample native calls:\n"
+               + "\n".join(native_calls[:6]))
+          problems = []
+          if "boltffiRetain" in text:
+              problems.append("baseline already contains boltffiRetain")
+          if "boltffiHandle" not in text:
+              problems.append("baseline has no boltffiHandle accessor")
+          if "Native." not in close_body:
+              problems.append("close() does not call Native directly")
+          if not re.search(r"Native\.[A-Za-z_]+\([^)\n]*boltffiHandle\(\)", text):
+              problems.append("no native call reads boltffiHandle() directly")
+          if problems:
+              emit("error", "BoltFFI RED assertion failed", "; ".join(problems))
+              sys.exit(1)
+          emit("notice", "BoltFFI RED baseline",
+               "unpatched v0.30.1 generated Kotlin frees through Native inside close(), passes boltffiHandle() "
+               "straight into native calls, and has no in-flight counter (upstream #664).")
           PY
 
       - name: Patched generator (GREEN)
@@ -175,21 +194,37 @@ jobs:
           cp "$log" provenance-patched.txt
           python3 - <<'PY'
           import hashlib, pathlib, re, sys
-          files = sorted(pathlib.Path("spikes/boltffi-retest/generated/kotlin").rglob("*.kt"))
+
+          def emit(kind, title, body):
+              body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+              print(f"::{kind} title={title}::{body[:900]}")
+
+          root = pathlib.Path("spikes/boltffi-retest/generated/kotlin")
+          files = sorted(root.rglob("*.kt"))
           if not files:
-              sys.exit("GREEN generation produced no Kotlin")
+              emit("error", "BoltFFI GREEN generation empty", f"no .kt under {root}")
+              sys.exit(1)
           text = "\n".join(f.read_text() for f in files)
+          retained = [ln.strip() for ln in text.splitlines() if "boltffiRetain" in ln or "boltffiRelease" in ln]
+          emit("notice", "BoltFFI GREEN generated shapes",
+               f"files={len(files)}\nretain/release lines:\n" + "\n".join(retained[:8]))
+          problems = []
           for required in ("__boltffi_calls", "boltffiRetain()", "boltffiRelease()"):
               if required not in text:
-                  sys.exit(f"GREEN assertion failed: generated Kotlin lacks {required}")
+                  problems.append(f"missing {required}")
           if "boltffiRetain().let" not in text:
-              sys.exit("GREEN assertion failed: stream subscribe sites were not regenerated with the retain wrapper")
-          leftover = re.findall(r"Native\.[A-Za-z_]+\([^)]*boltffiHandle\(\)", text)
+              problems.append("stream subscribe sites not regenerated with the retain wrapper")
+          leftover = re.findall(r"Native\.[A-Za-z_]+\([^)\n]*boltffiHandle\(\)", text)
           if leftover:
-              sys.exit(f"GREEN assertion failed: {len(leftover)} native call(s) still read boltffiHandle() directly: {leftover[:3]}")
+              problems.append(f"{len(leftover)} native call(s) still read boltffiHandle() directly")
+          if problems:
+              emit("error", "BoltFFI GREEN assertion failed", "; ".join(problems))
+              sys.exit(1)
           for f in files:
               print("KOTLIN_SHA256", f.name, hashlib.sha256(f.read_bytes()).hexdigest())
-          print("::notice title=BoltFFI GREEN generator::patched v0.30.1 generated Kotlin carries the in-flight counter behind close()/boltffiRetain()/boltffiRelease() and retains the receiver across every stream subscribe.")
+          emit("notice", "BoltFFI GREEN generator",
+               "patched v0.30.1 generated Kotlin carries the in-flight counter behind close()/boltffiRetain()/"
+               "boltffiRelease() and retains the receiver across every stream subscribe.")
           PY
 
       - name: Publish patch provenance

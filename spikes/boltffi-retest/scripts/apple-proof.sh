@@ -35,10 +35,13 @@ readonly RUN_BOUNDED="${SCRIPT_DIR}/run-with-timeout.py"
 
 cd -- "$SPIKE_DIR"
 
-app="generated/ios-app"
+app="${SPIKE_DIR}/generated/ios-app"
 rm -rf -- "$app"
 cp -R "${REPO_ROOT}/apps/ios" "$app"
 echo "APPLE_APP_COPY=${app}"
+# xcodebuild resolves -project relative to its working directory, so every
+# bounded invocation below runs inside this copy.
+readonly APP_DIR="${app}"
 
 framework="$(find generated/apple -name '*.xcframework' -maxdepth 4 | head -n 1)"
 if [ -z "$framework" ]; then
@@ -97,12 +100,12 @@ grep -hE '^(public|@_|extension)' "${generated_sources[@]}" | sort -u | head -n 
 if [ "$MODE" = "red" ] || [ "$MODE" = "partial" ]; then
   log="${MODE}-build.log"
   set +e
-  python3 "$RUN_BOUNDED" 420 "$log" "${base[@]}" build
+  ( cd -- "$APP_DIR" && python3 "$RUN_BOUNDED" 420 "${SPIKE_DIR}/${log}" "${base[@]}" build )
   status=$?
   set -e
   echo "APPLE_${MODE}_BUILD_EXIT=${status}"
   tail -n 40 "$log" || true
-  python3 - "$log" "$status" "$MODE" <<'PY'
+  python3 - "${SPIKE_DIR}/${log}" "$status" "$MODE" <<'PY'
 import re, sys
 log, status, mode = sys.argv[1], int(sys.argv[2]), sys.argv[3]
 lines = open(log, errors="replace").read().splitlines()
@@ -132,9 +135,9 @@ PY
   exit $?
 fi
 
-python3 "$RUN_BOUNDED" 420 build.log "${base[@]}" build
-python3 "$RUN_BOUNDED" 600 test.log "${base[@]}" test \
-  -parallel-testing-enabled NO -maximum-test-execution-time-allowance 90 -test-timeouts-enabled YES
+( cd -- "$APP_DIR" && python3 "$RUN_BOUNDED" 420 "${SPIKE_DIR}/build.log" "${base[@]}" build )
+( cd -- "$APP_DIR" && python3 "$RUN_BOUNDED" 600 "${SPIKE_DIR}/test.log" "${base[@]}" test \
+  -parallel-testing-enabled NO -maximum-test-execution-time-allowance 90 -test-timeouts-enabled YES )
 
 tail -n 40 build.log
 grep -E "error:|warning:.*Sendable" build.log | head -n 40 || true
