@@ -23,3 +23,7 @@ DerivedData/
 # Signing material must never be committed (docs/rules/security.md).
 *.keystore
 *.jks
+
+# Python bytecode from local harness checks (never part of the proof)
+__pycache__/
+*.pyc
