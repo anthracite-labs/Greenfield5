@@ -24,6 +24,12 @@ android {
         getByName("release") {
             isMinifyEnabled = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // When `testBuildType = release`, the androidTest APK is minified as well.
+            // Give it the same rules explicitly: the keep rules must cover the test APK,
+            // and so must the annotation-only `-dontwarn` rules - otherwise the test
+            // APK's R8 run fails assembly on androidx.test's absent annotations
+            // (run 35119746524) even though nothing is wrong with the bridge.
+            testProguardFiles("proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug")
         }
     }

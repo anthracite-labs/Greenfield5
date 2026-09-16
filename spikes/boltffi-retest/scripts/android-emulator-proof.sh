@@ -221,8 +221,20 @@ run_phase() {
   local variant="$1" assemble_task="$2"
   local upper="${variant^^}"
   rm -rf android/build/outputs/apk
+  local gradle_status=0
   "$REPO_ROOT/apps/android/gradlew" -p android "-PproofTestBuildType=${variant}" \
-    "$assemble_task" assembleAndroidTest --no-daemon
+    "$assemble_task" assembleAndroidTest --no-daemon || gradle_status=$?
+  if [ "$gradle_status" -ne 0 ]; then
+    # R8's console message names only the first missing class; its generated rules
+    # file lists every one. Without this the next diagnosis costs another full run
+    # (run 35119746524 failed the minified phase on an androidx.test annotation class).
+    echo "ANDROID_${upper}_ASSEMBLE_FAILED (gradle exit ${gradle_status})" >&2
+    while IFS= read -r rules; do
+      echo "---- ${rules} ----" >&2
+      sed -n '1,40p' "$rules" >&2 || true
+    done < <(find android/build/outputs/mapping -name 'missing_rules.txt' 2>/dev/null | sort)
+    exit "$gradle_status"
+  fi
   local app_apk test_apk
   app_apk="$(find android/build/outputs/apk -name '*.apk' -not -path '*/androidTest/*' | head -n 1)"
   test_apk="$(find android/build/outputs/apk -name '*.apk' -path '*/androidTest/*' | head -n 1)"
