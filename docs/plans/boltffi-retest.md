@@ -209,6 +209,18 @@ completion closure: `Error` is not `Sendable`, and boxing it would be the
 poll frame and lets `deinit` release the handle - still exactly once, still never
 inside a native frame. It is recorded, not hidden.
 
+
+> **PENDING (not evidence):** the change set committed as `4227404` is **not yet
+> dispatched** - GitHub authentication in the sandbox went invalid mid-session
+> (`gh auth status`: GH_TOKEN no longer valid; every `gh api` call returns
+> `Bad credentials`), so the push and the run it triggers are waiting on a
+> reconnect. Until that run exists, nothing in `4227404` is verified: the close-race
+> expectation fix, the deterministic Android contract-token check, the rebased
+> `T: Sendable` differential, the cancellation-aware restore guard and the
+> consolidated diagnostics are all **local changes with a passing local gate only**
+> (`verify.sh` PASS 17/0/2, `selftest.sh` PASS 128). The last executed head remains
+> `97a4924` (run `35111780326`).
+
 ## Evidence log (executed, newest first)
 
 Every entry is an executed CI run of `.github/workflows/boltffi-retest.yml` on
