@@ -5,8 +5,8 @@
 # The required status contexts stay exactly the two defined in
 # config/main-ruleset.json ("Foundation gate", "Independent checks"); this
 # workflow is deliberately non-required until the stack stabilizes
-# (ADR-0006 follow-up 8). iOS job added in Issue #15 to provide honest
-# verification for the native↔Rust bridge.
+# (ADR-0006 follow-up 5; ADR-0007 follow-up 2). iOS job added in Issue #15 to
+# provide honest verification for the native↔Rust bridge.
 name: Stack
 
 on:
@@ -701,31 +701,74 @@ jobs:
           # ios-test-log artifact cannot be downloaded from the sandbox, so a
           # green iOS job otherwise proves only "xcodebuild exited 0". This
           # publishes the markers that distinguish a real test run from a
-          # vacuous one — TEST SUCCEEDED, the destination actually used, the
-          # executed-test count, and each BridgeTests case — and it says so
-          # loudly when the count is missing. Bounded, guarded, cannot change
-          # the gate result.
+          # vacuous one - TEST SUCCEEDED, the executed-test count and the case
+          # lines - and it says so loudly when the count is missing. Bounded,
+          # guarded, cannot change the gate result.
           python3 - /tmp/ios-xcode-test.txt 'iOS bridge tests PASSED' <<'PY' || true
           import re, sys
           path, title = sys.argv[1], sys.argv[2]
-          keep = re.compile(r'\*\* TEST SUCCEEDED \*\*|\*\* TEST FAILED \*\*|Test Suite .* (passed|failed)|Executed \d+ tests?|Test Case .* (passed|failed)|Testing started on')
+          # These suites run under Swift Testing, whose xcodebuild report is
+          # (verbatim, Stack run 35082423424 / job 104749318038):
+          #   Testing started
+          #   Test suite 'BridgeTests' started on 'Clone 1 of iPad (10th generation) - Greenfield5 (36604)'
+          #   Test case 'BridgeTests/coreVersionIsExact()' passed on 'Clone 1 of iPad ... (36604)' (0.000 seconds)
+          #   ** TEST SUCCEEDED **
+          # This output has no "Executed N tests" line, so that counter cannot be
+          # this job's evidence and the notice must not claim one. The executed
+          # count is derived from the verified "Test case ... passed" lines.
           try:
               lines = open(path, 'r', errors='replace').read().splitlines()
           except OSError as exc:
-              lines = []
               print('::notice title=%s::iOS test log UNREADABLE %s: %s - NOT EVIDENCE' % (title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C'), path, exc))
               sys.exit(0)
-          hits = [ln.strip() for ln in lines if keep.search(ln)]
-          # A green xcodebuild with zero executed tests is a false proof, so the
-          # absence of a count is reported rather than glossed over.
+          case = re.compile(r"\bTest case '([^']+)'\s+(passed|failed)\b")
+          suite = re.compile(r"\bTest suite '([^']+)'\s+(started|passed|failed)\b")
+          legacy = None      # (count, failures) from the XCTest counter, if one exists
+          suites, cases = [], []
+          results = {}       # case identifier -> verdict; a case that failed anywhere counts as failed
+          for ln in lines:
+              m = case.search(ln)
+              if m:
+                  ident, outcome = m.group(1), m.group(2)
+                  if results.get(ident) != 'failed':
+                      results[ident] = outcome
+                  cases.append(ln.strip())
+                  continue
+              m = suite.search(ln)
+              if m:
+                  suites.append(ln.strip())
+                  continue
+              m = re.search(r'Executed (\d+) tests?, with (\d+) failures?', ln)
+              if m:
+                  legacy = (int(m.group(1)), int(m.group(2)))
+          passed = sum(1 for v in results.values() if v == 'passed')
+          failed = len(results) - passed
+          # A green xcodebuild with zero executed tests is a false proof, so an
+          # absent count is still reported rather than glossed over.
+          if results:
+              counted, source = '%d test cases (%d passed, %d failed)' % (len(results), passed, failed), 'swift-testing case lines'
+          elif legacy is not None and legacy[0] > 0:
+              counted, source = '%d tests, %d failures' % legacy, 'xctest counter'
+          else:
+              counted, source = None, None
           warns = []
-          if not any(re.search(r'Executed \d+ tests?', ln) for ln in hits):
-              warns.append('WARNING: no "Executed N tests" count found - NOT EVIDENCE')
-          if not any('** TEST SUCCEEDED **' in ln for ln in hits):
+          if counted is None:
+              if legacy is not None:
+                  warns.append('WARNING: only the XCTest counter was found and it reports 0 tests; it does not count Swift Testing cases - NOT EVIDENCE')
+              else:
+                  warns.append('WARNING: no executed-test count found (no "Test case ... passed/failed" lines and no XCTest tally) - NOT EVIDENCE')
+          verdict = next((ln.strip() for ln in lines if '** TEST SUCCEEDED **' in ln or '** TEST FAILED **' in ln), None)
+          if verdict is None:
               warns.append('WARNING: no "** TEST SUCCEEDED **" marker found - NOT EVIDENCE')
-          cases = [ln for ln in hits if ln.startswith('Test Case')][-8:]
-          tallies = [ln for ln in hits if re.search(r'Executed \d+ tests?|Test Suite .* (passed|failed)|Testing started on|\*\* TEST', ln)][-8:]
-          enc = '\n'.join(warns + tallies + cases)[:900].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          tallies = []
+          if counted is not None:
+              tallies.append('executed: %s [source: %s]' % (counted, source))
+          if legacy is not None:
+              tallies.append('xctest counter: Executed %d tests, %d failures' % legacy)
+          tallies += suites[-2:]
+          if verdict is not None:
+              tallies.append(verdict)
+          enc = '\n'.join(warns + tallies + cases[-4:])[:900].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
           print(f'::notice title={t}::{enc}')
           PY

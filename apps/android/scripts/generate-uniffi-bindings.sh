@@ -2,7 +2,11 @@
 set -euo pipefail
 
 # Generates Kotlin bindings for Greenfield5 core (UniFFI 0.32.1)
-# Called from CI after Rust Android libs built.
+# Convenience wrapper for local/no-CI use. The Android job in
+# `.github/workflows/stack.yml` currently INLINES this same sequence
+# (rm fallback → cargo build → uniffi-bindgen → package assertions) rather than
+# calling this script; the workflow carries one extra guard, the
+# `uniffi/greenfield5_core` wrong-package check. Keep the two in step.
 # Inputs: core/target/release/libgreenfield5_core.so (host) or .dylib on macOS
 # Outputs: apps/android/app/src/main/java/uniffi/greenfield5/
 

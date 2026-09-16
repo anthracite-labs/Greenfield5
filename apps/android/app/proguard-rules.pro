@@ -10,9 +10,14 @@
 # keep the symbols, otherwise the app crashes on startup when loading the Rust
 # library. Verified by assembleRelease in CI (stack.yml).
 
-# Keep all generated UniFFI bindings for greenfield5
+# Keep all generated UniFFI bindings for greenfield5.
+# The generated package is exactly `uniffi.greenfield5` — asserted by the
+# Android job in stack.yml, which fails if uniffi-bindgen ignores
+# core/uniffi.toml's package_name and produces a `uniffi.greenfield5_core`
+# package instead. No rule is needed for the ignored-default name.
 -keep class uniffi.greenfield5.** { *; }
--keep class uniffi.greenfield5_core.** { *; }
+# The bridge loader is dev.greenfield5.app.bridge.GreenfieldRustBridge; this
+# wildcard is the rule that actually keeps it. Keep it after any package move.
 -keep class dev.greenfield5.app.bridge.** { *; }
 
 # Keep JNA
@@ -31,9 +36,6 @@
 -keepclasseswithmembernames class * {
     native <methods>;
 }
-
-# Keep our Rust bridge loader
--keep class dev.greenfield5.app.GreenfieldRustBridge { *; }
 
 # UniFFI generates classes with @Suppress warnings and uses reflection for
 # cleaner; keep those
