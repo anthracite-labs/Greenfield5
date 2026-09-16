@@ -857,3 +857,8 @@ between Android and iOS, direct path plus relay fallback, before capture or UI.
 **Verified:** Replacement PR #20 initially ran at `31cf96f7c252bc754de4f0cd9b1b808f90536726` in workflow `35125696743`; Foundation gate job `104894060576` and Independent checks job `104894061107` both passed. The final tree's local verification remains `verify.sh` PASS 14/0/4, while local `selftest.sh` remains FAIL 127/1 solely because PyYAML is unavailable and `workflows_yaml/corrupted` was not caught.
 
 **Learned:** The exact-head CI was green for the replacement tree; a subsequent documentation-only update will necessarily require a new exact-head CI result before merge recommendation.
+
+**Correction:** After the verification ledger update, the final branch advanced to
+`b310d74b4833322a4bb10903897ec3aff6776d0c`; therefore run `35125696743` is not
+final-head evidence for the current commit. The current commit requires its own
+replacement run before merge recommendation.
