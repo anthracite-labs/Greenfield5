@@ -729,3 +729,136 @@ routing, not a blocker. Source investigation ties Swift diagnostic to exact tag.
 retaining UniFFI. Leave PR #18 open for independent review. Physical results stay
 UNVERIFIED — PHYSICAL DEVICE REQUIRED. Deferred BoltFFI fix is a later rerun
 trigger, not a second immediate PR.
+
+## 2026-09-16 — BoltFFI retest (PR #19): Swift async ownership RED→GREEN, Android real JNI executes
+
+Continuation of the prior-art-grounded patched-candidate retest on PR #19
+(`arena/01a0a9b5-greenfield5`), against pinned BoltFFI v0.30.1
+`2e6320a6d92cb591d22b908477f3a47da7ebc9bc`. Production UniFFI 0.32.1 and ADR-0007
+untouched; no upstream issue or PR submitted.
+
+**Verified (exact-head CI, output read back as annotations):**
+Run `35111780326` at `97a4924` — Apple job `104847425246` **success**: `Test run with
+19 tests passed` on real Rust in a real simulator, with `BOLT_PROOF
+sender/viewer/typed_errors/layout PASS`, `BOLT_ERR typed=BridgeError delivered=true`,
+`BOLT_BOUNDED policy=batch 100/100/0`, `BOLT_BACKLOG policy=unbounded 100/0/20/80`,
+`BOLT_CANCEL consumedAfterCancel=32 consumedAfterMore=32`, and all six
+`BOLT_LIFETIME ... clean ... violations=0` lines. The same suite failed at `c260caf`
+with 45 + 4 `(probe.active() -> 1) == 0` ownership issues; the tests did not change,
+the runtime did (patch 0004 v3).
+Swift 6 pair, both sides executed at that head:
+`SWIFT_TYPECHECK_unpatched_EXIT=1` at `:702:13`/`:703:13` (non-Sendable capture in a
+`@Sendable` closure) versus `SWIFT_TYPECHECK_patched_EXIT=0`.
+Lifetime pair, both sides executed: pre-0004 runtime
+`VIOLATION(free inside a native call; free inside a native callback)` in
+`completionInsideThePollFrameNeverFreesTheFuture` and `wakeDrivenRepollNeverOutlivesTheFree`;
+0004 v3 clean on all six probes with `free-once=true` and `frees=1` each.
+Android job `104847425692`: debug APK + instrumentation APK built, installed, boot
+20 s, KVM usable, contract suite executed through Kotlin → generated → JNI → Rust
+with `BOLT_PROOF ... async=PASS cancellation=PASS repeated_cancel=100 raced_cancel=100`
+and `BOLT_STREAM produced=200 consumed=26 nativeDropped=98 unconsumed=76`; the close
+suite failed at `ConcurrentCloseTest.kt:97` calling `release()` after `close()`,
+which patch 0002 (upstream #732) *requires* to be rejected.
+Rust job `104847425592` success. Verify run `35111780449` success (both required
+contexts); `35108329848` (verify at `c260caf`) re-read: success.
+
+**Changed:** patch 0004 v3 (SHA-256 `3d00887f…`) makes the Swift async runtime free
+the raw future on the call's serial queue *before* resuming the caller:
+`Owner.freeOnQueue()` is queue-confined and idempotent, `terminal(cancel:then:)` is
+the single free-then-resume step, `deinit` is only a last chance. Patch 0002 stays
+byte-for-byte PR #732 (`44265dc8…`). Harness: per-invocation (truncating) logs and
+per-mode logs; `-parse-as-library` for the standalone probe plus a Swift 6 GREEN
+typecheck; differential rebased onto the patched tree; cancellation-aware restore
+guard; Android marker greps read logcat as well as the runner output; Android RED
+asserts the counter tokens per build instead of relying on a race; diagnostics
+publish one notice per log inside the annotation budget.
+
+**Dead ends / corrected:** the `(probe.active() == 0)` failures were a real
+candidate difference (v2's deferred free let a native future outlive its call), not
+a test artifact — fixed in the runtime, not by relaxing the test. The "close race
+crash" expectation on Android was wrong: the patched build rejects deterministically
+instead of crashing, in both trees, so the RED/GREEN contrast is now asserted by
+generated-token presence. `concurrency: cancel-in-progress` means a push to the
+branch cancels the in-flight run; the `if: always()` restore step then reported a
+misleading `generation missing`. `gh run cancel` is 403 for this token (read-only on
+Actions), so runs cannot be cancelled from the sandbox. A local `py_compile` check
+put `__pycache__` into a commit; removed, and `.gitignore` now covers it.
+
+**Next:** rerun at the new head to confirm Android's close-race suite executes and
+prints `BOLT_CLOSE` on debug *and* minified release, and to get an executed
+`T: Sendable` differential and the #778-shaped Sendable characterization; then
+re-triage the remaining acceptance items and finish the PR #19 handoff. Physical
+device results stay **UNVERIFIED — PHYSICAL DEVICE REQUIRED**.
+
+## 2026-09-16 — BoltFFI retest closed: DEFER (PR #19, exact head b1adb9d)
+
+**Done:** Re-fetched PR #19 and fast-forwarded the session branch to
+`b1adb9d33025424aa463bfd66061959baab71fc5`; observed run `35121808215` and
+control run `35121808672`. Closed the candidate investigation with **DEFER**;
+removed disposable `spikes/boltffi-retest/` and its workflow. UniFFI 0.32.1 and
+ADR-0007 remain the production control.
+
+**Verified:** Rust job `104881538499` passed. Apple job `104881538243` passed:
+Swift 6 unpatched RED exit 1, patched GREEN exit 0, real-Rust simulator suite
+19 tests passed, and patched future probes reported one free, zero violations,
+including cancellation/readiness/repeated-cancellation cases. Android job
+`104881538579` executed debug Kotlin → generated binding → JNI → Rust; contract,
+stream, cancellation and concurrent-close markers passed, including
+`BOLT_CLOSE ... completed=true`.
+
+**Failed / learned:** Android minified instrumentation failed as a packaging
+configuration defect: `ClassNotFoundException: kotlin.jvm.internal.Lambda`.
+Therefore the required genuinely minified native path is not passed. Apple also
+measured BoltFFI's unbounded host stream (`produced=100, consumed=20,
+hostBuffered=80`) alongside the bounded batch path; this is a media adoption
+blocker. Structural counter/retain checks and a bounded close stress are useful
+but do not close every foreign ownership path; upstream #732 is still open and
+unmerged. The class-returning Sendable characterization rejects non-Sendable
+`Leaf`, so no blanket Sendable claim is warranted. No material advantage over
+working UniFFI was measured, and physical-device evidence remains unavailable.
+
+**Dead ends:** The Android debug pass must not be generalized to release; the
+R8 failure was not silently treated as an FFI semantic pass. The Apple job log
+endpoint was unavailable after completion, so the exact marker values were
+read from check-run annotations instead. No second patch loop was started.
+
+**Next:** Keep UniFFI and execute the next bounded Issue #11 proof: real Rust
+MoQ-over-Iroh synthetic moving encoded media between Android and iOS, direct
+path plus relay fallback, using hello-iroh-ffi/iroh-ffi/moq/iroh-live proven
+pieces; then require physical-device evidence before capture or UI work.
+
+## 2026-09-16 — Final branch/PR reconciliation (PR #19, session branch arena/01a0ab1a-greenfield5)
+
+**Done:** Re-fetched GitHub state and confirmed PR #19 still points at the stale
+candidate branch `arena/01a0a9b5-greenfield5` / `b1adb9d`. The finalized cleanup
+commit `aa5a4a1d1d94fb3780c805cbeadee6c55effacec` is on the required session
+branch `arena/01a0ab1a-greenfield5`; the plan is now explicitly closed as
+DEFER. No production code, UniFFI bridge, or ADR-0007 changed.
+
+**Verified:** Current main-to-final diff contains only durable docs/research and
+memory plus the candidate-removal cleanup; `spikes/boltffi-retest/` and its
+workflow are absent, and `scripts/verify.sh` has no intentional candidate-only
+logic. PR #19 remains open and must not be merged because it does not contain the
+final tree. Final CI for `aa5a4a1` is not yet available; old candidate CI is not
+reused as final-head proof.
+
+**Learned:** The GitHub PR head cannot be moved safely under the session rule
+that permits pushes only to `arena/01a0ab1a-greenfield5`. The compliant path is a
+replacement PR from that branch; PR #19 should remain open for explicit stale-PR
+reconciliation rather than being merged.
+
+**Next:** Create the replacement PR from `arena/01a0ab1a-greenfield5`, wait for
+its exact-head verification, and leave it open for independent review. Then
+Issue #11 is the next bounded task: real Rust MoQ-over-Iroh synthetic media
+between Android and iOS, direct path plus relay fallback, before capture or UI.
+
+## 2026-09-16 — Replacement PR final-head CI observed (PR #20)
+
+**Verified:** Replacement PR #20 initially ran at `31cf96f7c252bc754de4f0cd9b1b808f90536726` in workflow `35125696743`; Foundation gate job `104894060576` and Independent checks job `104894061107` both passed. The final tree's local verification remains `verify.sh` PASS 14/0/4, while local `selftest.sh` remains FAIL 127/1 solely because PyYAML is unavailable and `workflows_yaml/corrupted` was not caught.
+
+**Learned:** The exact-head CI was green for the replacement tree; a subsequent documentation-only update will necessarily require a new exact-head CI result before merge recommendation.
+
+**Correction:** After the verification ledger update, the final branch advanced to
+`b310d74b4833322a4bb10903897ec3aff6776d0c`; therefore run `35125696743` is not
+final-head evidence for the current commit. The current commit requires its own
+replacement run before merge recommendation.
