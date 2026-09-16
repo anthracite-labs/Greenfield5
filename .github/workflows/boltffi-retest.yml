@@ -452,8 +452,15 @@ jobs:
             ( cd spikes/boltffi-retest && "${CARGO_TARGET_DIR}/release/boltffi" -v pack apple --release --deny-skipped )
             bash spikes/boltffi-retest/scripts/apple-proof.sh lifetime
           }
+          # `probe` turns errexit back on so the chain fails fast, and shell options
+          # are global - so calling it directly here would kill this very step at the
+          # first failing command. That is what happened in run 35102072270: the
+          # probe's xcodebuild exited 65 while the log it had already written
+          # recorded the lifetime violation, and the step died before the assertion
+          # below could report it, skipping the entire GREEN phase. The subshell
+          # contains the status.
           set +e
-          probe >"$log" 2>&1
+          ( probe ) >"$log" 2>&1
           status=$?
           set -e
           tail -n 60 "$log"

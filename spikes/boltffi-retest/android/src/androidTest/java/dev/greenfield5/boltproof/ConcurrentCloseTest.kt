@@ -6,6 +6,12 @@ import org.junit.runner.RunWith
 
 import dev.greenfield5.bolt.AsyncProbe
 import dev.greenfield5.bolt.EventProbe
+// The generator emits stream accessors as extension functions on the receiver
+// (`fun EventProbe.eventsBatch(): EventsBatchSubscription`), and Kotlin requires
+// an explicit import for a top-level extension - unlike the class itself, which
+// comes in with the receiver's import. Without this the instrumentation APK does
+// not compile (run 35102072270: unresolved reference 'eventsBatch').
+import dev.greenfield5.bolt.eventsBatch
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
