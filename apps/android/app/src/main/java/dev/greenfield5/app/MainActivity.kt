@@ -10,10 +10,11 @@ import dev.greenfield5.app.ui.theme.Greenfield5Theme
 /**
  * Single-activity Compose host for the Greenfield5 shell.
  *
- * The shell is UI-only until the native-to-Rust bridge lands (ADR-0006
- * follow-up 1): it renders the home screen and the Sender/Viewer entry
- * points, and holds no session logic of its own — that lives in
- * `greenfield5-core` and will be reached exclusively through the seam.
+ * The shell renders the home screen and the Sender/Viewer entry points and
+ * holds no session logic of its own — that lives in `greenfield5-core` and is
+ * reached through the UniFFI bridge (`dev.greenfield5.app.bridge
+ * .GreenfieldRustBridge`, ADR-0007). Pairing, capture and transport flows are
+ * follow-up work.
  */
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {

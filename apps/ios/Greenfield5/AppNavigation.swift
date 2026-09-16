@@ -3,10 +3,11 @@ import Foundation
 /// The screens the shell can show (PRODUCT.md §2).
 ///
 /// Deliberately a shell-local UI model that mirrors the Android `AppScreen`:
-/// the shared session vocabulary (Role, ConnectionMode, SessionState) belongs
-/// to `greenfield5-core` and crosses the seam only when the bridge lands
-/// (ADR-0006). Duplicating the core model here before a real FFI boundary
-/// exists would be exactly the coupling the seam is meant to prevent.
+/// navigation screens are a UI concern and stay separate from the shared
+/// session vocabulary (Role, ConnectionMode, SessionState), which belongs to
+/// `greenfield5-core` and reaches Swift through the UniFFI bridge (ADR-0007)
+/// behind `GreenfieldRustBridge`. Conflating the two would couple navigation to
+/// the session/transport boundary.
 enum AppScreen: String, CaseIterable, Hashable, Sendable {
     /// Home screen with the two primary actions.
     case home

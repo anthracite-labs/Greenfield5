@@ -5,8 +5,8 @@
 # The required status contexts stay exactly the two defined in
 # config/main-ruleset.json ("Foundation gate", "Independent checks"); this
 # workflow is deliberately non-required until the stack stabilizes
-# (ADR-0006 follow-up 8). iOS job added in Issue #15 to provide honest
-# verification for the native↔Rust bridge.
+# (ADR-0006 follow-up 5; ADR-0007 follow-up 2). iOS job added in Issue #15 to
+# provide honest verification for the native↔Rust bridge.
 name: Stack
 
 on:
@@ -701,31 +701,81 @@ jobs:
           # ios-test-log artifact cannot be downloaded from the sandbox, so a
           # green iOS job otherwise proves only "xcodebuild exited 0". This
           # publishes the markers that distinguish a real test run from a
-          # vacuous one — TEST SUCCEEDED, the destination actually used, the
-          # executed-test count, and each BridgeTests case — and it says so
-          # loudly when the count is missing. Bounded, guarded, cannot change
-          # the gate result.
+          # vacuous one - TEST SUCCEEDED, the executed-test count and the case
+          # lines - and it says so loudly when the count is missing. Bounded,
+          # guarded, cannot change the gate result.
           python3 - /tmp/ios-xcode-test.txt 'iOS bridge tests PASSED' <<'PY' || true
           import re, sys
           path, title = sys.argv[1], sys.argv[2]
-          keep = re.compile(r'\*\* TEST SUCCEEDED \*\*|\*\* TEST FAILED \*\*|Test Suite .* (passed|failed)|Executed \d+ tests?|Test Case .* (passed|failed)|Testing started on')
+          # The suites in this target are Swift Testing (@Suite/@Test), whose
+          # output this notice must recognise. Two runners can print here:
+          # XCTest (legacy) keeps its own counter, "Executed N tests, with M
+          # failures", while Swift Testing reports itself as "Test run with N
+          # tests passed after X seconds." (or "... failed ...") and never
+          # increments the XCTest counter. Before this change only XCTest shapes
+          # were recognised, so a passing Swift Testing run published
+          # 'no "Executed N tests" count found - NOT EVIDENCE' even though the
+          # tests had executed (Stack run 35082423424, job 104749318038:
+          # 4 AppNavigationTests + 7 BridgeTests passing, TEST SUCCEEDED).
           try:
               lines = open(path, 'r', errors='replace').read().splitlines()
           except OSError as exc:
-              lines = []
               print('::notice title=%s::iOS test log UNREADABLE %s: %s - NOT EVIDENCE' % (title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C'), path, exc))
               sys.exit(0)
-          hits = [ln.strip() for ln in lines if keep.search(ln)]
-          # A green xcodebuild with zero executed tests is a false proof, so the
-          # absence of a count is reported rather than glossed over.
+          summary = None   # (count, verdict) from Swift Testing's own summary line
+          legacy = None    # (count, failures) from XCTest's counter, which excludes Swift Testing
+          passed = failed = 0
+          cases, suites = [], []
+          for ln in lines:
+              m = re.search(r'Test run with (\d+) tests?\s+(passed|failed)', ln)
+              if m:
+                  summary = (int(m.group(1)), m.group(2))
+              m = re.search(r'Executed (\d+) tests?, with (\d+) failures?', ln)
+              if m:
+                  legacy = (int(m.group(1)), int(m.group(2)))
+              # Result lines carry a leading U+2714 (passed) / U+2718 (failed) mark.
+              m = re.search(r'^[\u2714\u2718]\s+Test\s+\S+\(\)\s+(passed|failed) after', ln)
+              if m:
+                  if m.group(1) == 'failed':
+                      failed += 1
+                  else:
+                      passed += 1
+                  cases.append(ln.strip())
+              elif re.search(r'^[\u2714\u2718]\s+Suite\s+".*"\s+(passed|failed) after', ln):
+                  suites.append(ln.strip())
+          # A green xcodebuild with zero executed tests is a false proof, so an
+          # absent count is still reported rather than glossed over. The count
+          # prefers the runner that actually executed these suites; a positive
+          # XCTest tally still counts as evidence, in case this target ever adds
+          # XCTest cases alongside Swift Testing.
+          if summary is not None:
+              counted, source = '%d tests (%s)' % summary, 'swift-testing summary'
+          elif passed or failed:
+              counted, source = '%d case lines (%d passed, %d failed)' % (passed + failed, passed, failed), 'swift-testing case lines'
+          elif legacy is not None and legacy[0] > 0:
+              counted, source = '%d tests, %d failures' % legacy, 'xctest counter'
+          else:
+              counted, source = None, None
           warns = []
-          if not any(re.search(r'Executed \d+ tests?', ln) for ln in hits):
-              warns.append('WARNING: no "Executed N tests" count found - NOT EVIDENCE')
-          if not any('** TEST SUCCEEDED **' in ln for ln in hits):
+          if counted is None:
+              if legacy is not None:
+                  warns.append('WARNING: only the XCTest counter was found and it reports 0 tests; it does not count Swift Testing cases - NOT EVIDENCE')
+              else:
+                  warns.append('WARNING: no executed-test count found (no Swift Testing summary, no case lines, no XCTest tally) - NOT EVIDENCE')
+          verdict = next((ln.strip() for ln in lines if '** TEST SUCCEEDED **' in ln or '** TEST FAILED **' in ln), None)
+          if verdict is None:
               warns.append('WARNING: no "** TEST SUCCEEDED **" marker found - NOT EVIDENCE')
-          cases = [ln for ln in hits if ln.startswith('Test Case')][-8:]
-          tallies = [ln for ln in hits if re.search(r'Executed \d+ tests?|Test Suite .* (passed|failed)|Testing started on|\*\* TEST', ln)][-8:]
-          enc = '\n'.join(warns + tallies + cases)[:900].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+          tallies = []
+          if counted is not None:
+              tallies.append('executed: %s [source: %s]' % (counted, source))
+          if summary is not None:
+              tallies.append('swift-testing: Test run with %d tests %s' % summary)
+          if legacy is not None:
+              tallies.append('xctest counter: Executed %d tests, %d failures' % legacy)
+          tallies += suites[-2:]
+          if verdict is not None:
+              tallies.append(verdict)
+          enc = '\n'.join(warns + tallies + cases[-4:])[:900].replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
           t = title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C')
           print(f'::notice title={t}::{enc}')
           PY

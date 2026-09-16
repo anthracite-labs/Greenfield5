@@ -862,3 +862,53 @@ between Android and iOS, direct path plus relay fallback, before capture or UI.
 `b310d74b4833322a4bb10903897ec3aff6776d0c`; therefore run `35125696743` is not
 final-head evidence for the current commit. The current commit requires its own
 replacement run before merge recommendation.
+
+## 2026-09-16 — Audit-findings cleanup (F1–F4) on the session branch
+
+**Done:** Implemented exactly the four verified audit findings that were still
+true on main `5a64ee9e`; no other defect hunting, no architecture change.
+F1 `docs/codemaps/core-session.md` re-synced to the code and ADR-0007 (UniFFI
+0.32.1 + thiserror deps and `core/Cargo.lock`; the bridge is production, not
+"future"; `uniffi_api.rs` / `uniffi.toml` / `uniffi-bindgen.rs` listed; capture
+commands documented as deliberately not role-guarded; `CoreError` variants
+renamed to `Unknown{Role,Mode,Command}Code` + `Session`; 40 tests;
+crate-level `allow(unsafe_code)` documented as ADR-0007's boundary model).
+F2 corrected eight demonstrably stale statements: `docs/DOMAIN.md` ("product
+undefined" → defined, with the real ADR-0006 follow-up 8 attribution),
+`README.md` repo map (stack CI line omitted iOS), `docs/ROADMAP.md` follow-up
+8 → 5, `apps/android/scripts/generate-uniffi-bindings.sh` ("Called from CI" →
+inlined by the workflow), `apps/ios/.../GreenfieldRustBridge.swift` (stub file
+name), and the "until the bridge lands / native-to-Rust bridge lands" comments
+in `MainActivity.kt`, `ui/AppNavigation.kt`, `AppNavigation.swift`,
+`Greenfield5App.swift`. F3 taught the iOS success-notice parser Swift Testing
+output (see Learned). F4 removed the two dead R8 keeps
+(`uniffi.greenfield5_core.**`, `dev.greenfield5.app.GreenfieldRustBridge`) whose
+real counterparts are already covered by the `uniffi.greenfield5.**` and
+`dev.greenfield5.app.bridge.**` wildcards.
+
+**Verified:** Parser change developed RED→GREEN with a probe that extracts the
+notice heredoc out of `stack.yml` itself: at HEAD the Swift Testing fixture
+reproduced the observed CI string `WARNING: no "Executed N tests" count found -
+NOT EVIDENCE`; after the patch the same fixture reports
+`executed: 11 tests (passed) [source: swift-testing summary]`, while the
+no-signal fixture still warns, the legacy `Executed 0 tests` fixture is labelled
+as *not* evidence, and a failing Swift Testing summary is never reported as
+success. Local gates after the change: `git diff --check` clean,
+`bash scripts/verify.sh` PASS 16/0/2 (unchanged skips), `bash
+scripts/selftest.sh` PASS 128/128, shellcheck clean over 7 tracked scripts,
+28 embedded workflow Python heredocs compile and 32 `run:` blocks pass `bash
+-n`. Exact-head Stack CI is the execution evidence for the Android R8 release
+path and the iOS test job; local sandbox has no cargo/java/swift.
+
+**Learned:** This repository's Swift Testing suites print
+`✔ Test run with N tests passed after X seconds.` (U+2714) or
+`✘ Test run with N tests failed ...` (U+2718), and the legacy XCTest counter
+`Executed 0 tests, with 0 failures ...` in the same log counts XCTest cases
+only — treating a zero XCTest tally as "no tests ran" is wrong while Swift
+Testing cases exist (Stack run 35082423424 job 104749318038 executed 4
+AppNavigationTests + 7 BridgeTests). A generated UniFFI package name is fixed by
+`core/uniffi.toml` (`uniffi.greenfield5`) and asserted in the Android job, so
+keep rules for the ignored default name (`uniffi.greenfield5_core`) can never
+match. The workflow header's stack-CI stabilization follow-up is ADR-0006
+follow-up 5 (its follow-up 8 is the `docs/DOMAIN.md` vocabulary task, now
+noted in DOMAIN.md itself).

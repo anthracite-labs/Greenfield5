@@ -6,7 +6,8 @@ import Foundation
 ///   this wrapper delegates to the real UniFFI-generated Swift bindings
 ///   (package `greenfield5` with C header + modulemap).
 /// - When the XCFramework is absent (local builds without Rust toolchain),
-///   it uses the pure-Swift stub in `Generated/greenfield5.swift` which mirrors
+///   it uses the committed pure-Swift stub in `Generated/greenfield5_core.swift`
+///   (CI deletes it and regenerates the real bindings), which mirrors
 ///   the same API and session logic as Rust.
 ///
 /// The narrow API ensures UI code depends on this wrapper only, never on

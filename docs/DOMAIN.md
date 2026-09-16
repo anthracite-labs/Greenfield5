@@ -1,15 +1,19 @@
 # Domain
 
-**Status: intentionally undefined.**
+**Status: product defined, domain vocabulary not yet recorded.**
 
-No domain model, ubiquitous language, entities, or business rules exist yet,
-because no product has been defined (see [PRODUCT.md](PRODUCT.md)).
+The product is defined in [PRODUCT.md](PRODUCT.md) (reviewed MVP contract,
+Issue #3). What is still missing is the domain record itself: entities,
+ubiquitous language, invariants, and business rules in one place.
 
-This file exists so that the gap is explicit. It will hold the domain
-vocabulary — entities, invariants, state transitions, and the meanings the
-team agrees on — once a product definition exists.
+This file exists so that the gap is explicit. Filling it from the now-executable
+session model is ADR-0006 follow-up 8. Until then the authoritative statements
+live where they are enforced — session semantics in
+[`core/src/session.rs`](../core/src/session.rs) and
+[codemaps/core-session.md](codemaps/core-session.md), product rules in
+[PRODUCT.md](PRODUCT.md).
 
-## Skeleton to fill in (leave empty until the product is defined)
+## Skeleton to fill in (leaves intentionally empty until the domain record is written)
 
 ### Entities
 
@@ -54,6 +58,6 @@ These describe the foundation, not any product domain.
 
 ## Related
 
-- [PRODUCT.md](PRODUCT.md) — product definition (undefined)
+- [PRODUCT.md](PRODUCT.md) — product definition (reviewed MVP contract)
 - [ARCHITECTURE.md](ARCHITECTURE.md) — the engineering system
 - [decisions/](decisions/README.md) — decision record index

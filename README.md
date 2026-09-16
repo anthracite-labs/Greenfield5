@@ -96,7 +96,7 @@ docs/                      product, domain, architecture, roadmap, security, mem
 docs/decisions/            architecture decision records
 scripts/                   verify, selftest, bootstrap, init-project, sync-ecc
 .github/workflows/verify.yml   independent CI execution of the same gate
-.github/workflows/stack.yml    Rust core + Android shell CI (ADR-0006), non-required
+.github/workflows/stack.yml     Rust core + Android/iOS shell CI (ADR-0006/0007), non-required
 apps/android/              Greenfield5 Android shell (Kotlin + Compose, AGP 9)
 apps/ios/                  Greenfield5 iOS shell (Swift 6 + SwiftUI, Xcode project)
 core/                      greenfield5-core — shared Rust session/protocol core

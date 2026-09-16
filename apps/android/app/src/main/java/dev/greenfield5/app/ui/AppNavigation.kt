@@ -3,11 +3,11 @@ package dev.greenfield5.app.ui
 /**
  * The screens the shell can show.
  *
- * Deliberately a shell-local UI model: the shared session vocabulary
- * (Role, ConnectionMode, SessionState) belongs to `greenfield5-core` and
- * crosses the seam only when the bridge lands (ADR-0006). Duplicating the
- * core model here before a real FFI boundary exists would be exactly the
- * coupling the seam is meant to prevent.
+ * Deliberately a shell-local UI model: navigation screens are a UI concern and
+ * stay separate from the shared session vocabulary (Role, ConnectionMode,
+ * SessionState), which belongs to `greenfield5-core` and reaches Kotlin through
+ * the UniFFI bridge (ADR-0007) behind `GreenfieldRustBridge`. Conflating the two
+ * would couple navigation to the session/transport boundary.
  */
 enum class AppScreen {
     /** Home screen with the two primary actions (PRODUCT.md §2). */
