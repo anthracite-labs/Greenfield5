@@ -135,14 +135,33 @@ PY
   exit $?
 fi
 
+set +e
 ( cd -- "$APP_DIR" && python3 "$RUN_BOUNDED" 420 "${SPIKE_DIR}/build.log" "${base[@]}" build )
+build_status=$?
+set -e
+echo "APPLE_TEST_BUILD_EXIT=${build_status}"
+tail -n 20 build.log || true
+if [ "$build_status" -ne 0 ]; then
+  # The whole point of a bounded, self-announcing proof: a compile failure must
+  # print its diagnostics here instead of leaving a bare exit code behind.
+  echo "---- build diagnostics ----"
+  grep -E "error:" build.log | head -n 60 || true
+  exit "$build_status"
+fi
+
+set +e
 ( cd -- "$APP_DIR" && python3 "$RUN_BOUNDED" 600 "${SPIKE_DIR}/test.log" "${base[@]}" test \
   -parallel-testing-enabled NO -maximum-test-execution-time-allowance 90 -test-timeouts-enabled YES )
-
-tail -n 40 build.log
-grep -E "error:|warning:.*Sendable" build.log | head -n 40 || true
+test_status=$?
+set -e
+echo "APPLE_TEST_EXIT=${test_status}"
 tail -n 60 test.log
 grep -E '\*\* TEST (SUCCEEDED|FAILED) \*\*|Executed [0-9]+ test|Test run with [0-9]+ test|Test Case .* (passed|failed)' test.log | tail -n 30 || true
+if [ "$test_status" -ne 0 ]; then
+  echo "---- test diagnostics ----"
+  grep -E "error:|XCTAssert|recorded an issue|failed" test.log | tail -n 60 || true
+  exit "$test_status"
+fi
 
 grep -q '\*\* TEST SUCCEEDED \*\*' test.log
 grep -q 'BOLT_PROOF version=0.1.0' test.log

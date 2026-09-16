@@ -270,6 +270,8 @@ jobs:
           if [ "$status" -ne 0 ]; then
             msg="$(tail -n 25 "$log" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | tail -c 900)"
             echo "::error title=BoltFFI Android native proof failed::${msg}"
+            errors="$(grep -E 'error:|ERROR|PANIC|Fatal|Exception|cannot|not found|no such' "$log" | head -n 25 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | tail -c 900)"
+            echo "::error title=BoltFFI Android native proof errors::${errors}"
             exit "$status"
           fi
 
@@ -345,7 +347,8 @@ jobs:
               data = path.read_text(errors="replace")
               keep = [ln for ln in data.splitlines()
                       if any(k in ln for k in ("BOLT_", "OK (1 test)", "FAILURES", "INSTRUMENTATION_",
-                                               "ANDROID_", "error", "Exception", "Use after free", "SIGSEGV"))]
+                                               "ANDROID_", "error:", "ERROR", "PANIC", "Exception",
+                                               "Use after free", "SIGSEGV", "Unknown AVD"))]
               parts.append(f"[{name}]\n" + "\n".join(keep[-40:]))
           text = "\n".join(parts)[-2400:]
           text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
@@ -509,6 +512,8 @@ jobs:
           if [ "$status" -ne 0 ]; then
             msg="$(tail -n 25 "$log" | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | tail -c 900)"
             echo "::error title=BoltFFI Apple native proof failed::${msg}"
+            errors="$(grep -E 'error:|XCTAssert|recorded an issue|failed|FAILED' "$log" | head -n 25 | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | tail -c 900)"
+            echo "::error title=BoltFFI Apple native proof errors::${errors}"
             exit "$status"
           fi
 

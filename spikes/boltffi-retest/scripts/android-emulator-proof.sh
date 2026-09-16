@@ -87,7 +87,27 @@ if [ "$("$ADB" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r' || true
   echo "ANDROID_EMULATOR_REUSED=$("$ADB" get-serialno 2>/dev/null || true)"
   booted=1
 else
+  # The emulator only searches ANDROID_AVD_HOME, ANDROID_SDK_HOME/avd and
+  # $HOME/.android/avd for <name>.ini. Pin the location for avdmanager so the
+  # AVD is created exactly where the emulator looks, then prove it exists -
+  # "avdmanager exited 0" is not evidence that an AVD was written.
+  export ANDROID_AVD_HOME="${HOME}/.android/avd"
+  mkdir -p -- "$ANDROID_AVD_HOME"
+  echo "ANDROID_AVD_HOME=${ANDROID_AVD_HOME}"
+  echo "ANDROID_HOME=${HOME}"
+  echo "ANDROID_USER_HOME=${ANDROID_USER_HOME:-<unset>}"
+  echo "ANDROID_SDK_HOME=${ANDROID_SDK_HOME:-<unset>}"
   echo no | "$AVDMANAGER" create avd -n "$AVD_NAME" -k "$SYSTEM_IMAGE" --force
+  "$AVDMANAGER" list avd || true
+  if [ ! -f "${ANDROID_AVD_HOME}/${AVD_NAME}.ini" ]; then
+    echo "avdmanager did not write ${ANDROID_AVD_HOME}/${AVD_NAME}.ini" >&2
+    echo "---- searching for the AVD it did write ----" >&2
+    find / -name "${AVD_NAME}.ini" -print 2>/dev/null | head -5 >&2 || true
+    echo "---- candidate AVD roots ----" >&2
+    find "${HOME}/.android" -maxdepth 2 -print 2>/dev/null | head -20 >&2 || true
+    find "${ANDROID_HOME}" -maxdepth 3 -name '*.avd' -print 2>/dev/null | head -5 >&2 || true
+    exit 1
+  fi
 
   emulator_log="${SPIKE_DIR}/emulator.log"
   emulator_cmd=("$EMULATOR" -avd "$AVD_NAME" -no-window -no-audio -no-boot-anim
@@ -95,7 +115,11 @@ else
   printf 'EMULATOR_CMD=%s\n' "${emulator_cmd[*]}"
   "${emulator_cmd[@]}" >"$emulator_log" 2>&1 &
   emulator_pid=$!
-  trap 'if [ -n "$emulator_pid" ]; then kill "$emulator_pid" 2>/dev/null || true; fi; "$ADB" emu kill 2>/dev/null || true' EXIT
+  # A prefixed run (the RED probe) tears its device down; an unprefixed run
+  # leaves the booted device for the probe, so one boot serves both.
+  if [ -n "$LOG_PREFIX" ]; then
+    trap 'if [ -n "$emulator_pid" ]; then kill "$emulator_pid" 2>/dev/null || true; fi; "$ADB" emu kill 2>/dev/null || true' EXIT
+  fi
 
   for elapsed in $(seq 0 10 "$BOOT_CEILING_SECONDS"); do
     if ! kill -0 "$emulator_pid" 2>/dev/null; then
@@ -117,7 +141,7 @@ else
   done
 
   if [ "$booted" -ne 1 ]; then
-    echo "ANDROID_BOOT_FAILED after ${BOOT_CEILING_SECONDS}s ceiling" >&2
+    echo "ANDROID_BOOT_FAILED after ${elapsed}s (ceiling ${BOOT_CEILING_SECONDS}s)" >&2
     echo "---- adb devices ----" >&2
     "$ADB" devices -l >&2 || true
     echo "---- adb get-state ----" >&2
@@ -189,9 +213,10 @@ run_phase() {
   grep 'BOLT_CLOSE' "${LOG_PREFIX}${variant}-close.log" "${LOG_PREFIX}${upper}_CLOSE-logcat.txt" || true
 }
 
-# Minified release first, then debug: if the release run is the one that
-# exposes an R8/keep-rule problem, the log order makes that obvious.
-run_phase release assembleRelease
+# Debug first (the primary execution evidence), then the minified release
+# variant, where an R8/keep-rule mistake would fail a real run instead of a
+# static grep. Both are recorded, so the order is only about log readability.
 run_phase debug assembleDebug
+run_phase release assembleRelease
 
 echo "ANDROID_NATIVE_PROOF=complete"
