@@ -89,6 +89,21 @@ check-run annotations. Verbatim shapes captured from this repository's CI:
 ** TEST SUCCEEDED **
 ```
 
+## Implementation reality check (F3, recorded during execution)
+
+The first exact-head run of the F3 change (`1d8f73a`, Stack run `35129931987`,
+job `104908125375`) proved the *shipped* parser still found no count: the real
+iOS log carries `** TEST SUCCEEDED **` and none of the Swift Testing summary,
+glyph-prefixed case lines or XCTest counter shapes the change recognised. The
+log-artifact blob host stays unreachable from this sandbox, so the actual line
+grammar must be reproduced by CI, not guessed: the parser was widened to the
+documented Swift Testing decoration variants (optional status glyph, optional
+ANSI colour, quoted display names vs bare `name()` identifiers), all negative
+fixtures still warn, and the next exact-head run is the acceptance evidence.
+F3 stays open until a run reports a count derived from real passing test-case
+lines. The verbatim raw lines of run `35082423424` / job `104749318038` remain
+the authoritative fixture and were requested from the task owner.
+
 ## Phases (each names its verification)
 
 1. **F4 — ProGuard.** Confirm the real packages (`dev.greenfield5.app.bridge`,

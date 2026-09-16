@@ -912,3 +912,17 @@ keep rules for the ignored default name (`uniffi.greenfield5_core`) can never
 match. The workflow header's stack-CI stabilization follow-up is ADR-0006
 follow-up 5 (its follow-up 8 is the `docs/DOMAIN.md` vocabulary task, now
 noted in DOMAIN.md itself).
+
+**Correction (same day, after the first exact-head run):** `1d8f73a`'s Stack run
+`35129931987` (iOS job `104908125375`) came back green but its success notice
+still reported no count, because the real iOS log contains only
+`** TEST SUCCEEDED **` - no Swift Testing summary line, no glyph-prefixed case
+lines, no XCTest counter. The first parser version was therefore recognising
+the *BoltFFI-spike* decorations, not this job's actual ones; the notice is
+widened to the documented Swift Testing variants (optional glyph, optional ANSI
+colour, quoted display names vs bare `name()`), verified locally against six
+fixtures including a start-line-only log that must still warn, and re-proved on
+the next exact-head run. Lesson: for a log-parsing change, a green job is not
+evidence that the parser matched - the notice's own output is the assertion,
+and an unrecognised shape must leave the finding OPEN rather than be declared
+resolved.

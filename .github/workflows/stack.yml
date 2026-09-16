@@ -722,26 +722,35 @@ jobs:
           except OSError as exc:
               print('::notice title=%s::iOS test log UNREADABLE %s: %s - NOT EVIDENCE' % (title.replace('%', '%25').replace(':', '%3A').replace(',', '%2C'), path, exc))
               sys.exit(0)
+          ansi = re.compile(r'\x1b\[[0-9;]*m')
           summary = None   # (count, verdict) from Swift Testing's own summary line
           legacy = None    # (count, failures) from XCTest's counter, which excludes Swift Testing
           passed = failed = 0
           cases, suites = [], []
-          for ln in lines:
+          seen = set()     # result lines are counted once per test identifier
+          for raw in lines:
+              ln = ansi.sub('', raw)                      # decoration, not semantics
               m = re.search(r'Test run with (\d+) tests?\s+(passed|failed)', ln)
               if m:
                   summary = (int(m.group(1)), m.group(2))
               m = re.search(r'Executed (\d+) tests?, with (\d+) failures?', ln)
               if m:
                   legacy = (int(m.group(1)), int(m.group(2)))
-              # Result lines carry a leading U+2714 (passed) / U+2718 (failed) mark.
-              m = re.search(r'^[\u2714\u2718]\s+Test\s+\S+\(\)\s+(passed|failed) after', ln)
+              # Swift Testing result line: an optional status glyph (U+25C7/U+2714/
+              # U+2718) then 'Test' then the identifier - a quoted display name
+              # ('@Test("...")') or the bare function name with its argument list -
+              # then passed/failed. Existing logs print all of these variants.
+              m = re.search(r'\bTest\s+(?:"[^"]+"|[A-Za-z_][\w.]*\([^)]*\))\s+(passed|failed)\b', ln)
               if m:
-                  if m.group(1) == 'failed':
-                      failed += 1
-                  else:
-                      passed += 1
-                  cases.append(ln.strip())
-              elif re.search(r'^[\u2714\u2718]\s+Suite\s+".*"\s+(passed|failed) after', ln):
+                  ident = m.group(0)[:-len(m.group(1))].rstrip()
+                  if ident not in seen:
+                      seen.add(ident)
+                      if m.group(1) == 'failed':
+                          failed += 1
+                      else:
+                          passed += 1
+                      cases.append(ln.strip())
+              elif re.search(r'\bSuite\s+(?:"[^"]+"|\S+)\s+(passed|failed) after', ln):
                   suites.append(ln.strip())
           # A green xcodebuild with zero executed tests is a false proof, so an
           # absent count is still reported rather than glossed over. The count
