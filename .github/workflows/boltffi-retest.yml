@@ -741,20 +741,36 @@ jobs:
         run: |
           python3 - <<'PY'
           import pathlib, re
-          parts = []
-          for name in ("lifetime-green.log", "spikes/boltffi-retest/test.log", "xcode-test.log",
-                       "red-typecheck.log", "lifetime-red.log", "green-generation.log",
-                       "red-generation.log", "differential.log", "sendable-probe.log",
-                       "spikes/boltffi-retest/typecheck-unpatched.log"):
+
+          def encode(lines):
+              """One annotation body: %25-escaped, %0A-joined, capped per log."""
+              return "%0A".join(ln.replace("%", "%25") for ln in lines)
+
+          # One notice per log, so no single file can push another out of the
+          # annotation budget: the first version of this step kept only the last
+          # 2400 characters of the concatenation and silently hid exactly the file
+          # that had failed.
+          logs = [
+              "lifetime-green.log", "spikes/boltffi-retest/test.log", "xcode-test.log",
+              "red-typecheck.log", "lifetime-red.log", "green-generation.log",
+              "red-generation.log", "differential.log", "sendable-probe.log",
+              "spikes/boltffi-retest/typecheck-unpatched.log",
+              "spikes/boltffi-retest/sendable-probe/typecheck-class-returning.log",
+          ]
+          pattern = (r"BOLT_|Executed [0-9]+ test|OK \(1 test\)|error:|VIOLATION|"
+                     r"SWIFT_TYPECHECK|cannot find|Testing failed|No such file|"
+                     r"failed|ANDROID_|INSTRUMENTATION")
+          missing = []
+          for name in logs:
               path = pathlib.Path(name)
               if not path.exists():
-                  parts.append(f"[{name}: MISSING]")
+                  missing.append(name)
                   continue
-              data = path.read_text(errors="replace")
-              keep = [ln for ln in data.splitlines()
-                      if re.search(r"BOLT_|Executed [0-9]+ test|OK \(1 test\)|error:|VIOLATION|passed|failed|SWIFT_TYPECHECK|poll after free", ln, re.I)]
-              parts.append(f"[{name}]\n" + "\n".join(keep[-14:]))
-          text = "\n".join(parts)[-2400:]
-          text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-          print("::notice title=BoltFFI candidate Apple result::" + text)
+              lines = path.read_text(errors="replace").splitlines()
+              keep = [ln for ln in lines if re.search(pattern, ln, re.I)] or lines[-12:]
+              print("::notice title=BoltFFI Apple " + name + "::"
+                    + encode(keep[-14:])[:900])
+          if missing:
+              print("::notice title=BoltFFI Apple logs missing::"
+                    + ", ".join(missing))
           PY

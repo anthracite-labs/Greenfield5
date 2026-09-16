@@ -22,15 +22,19 @@ final class MockNativeFutureRegistry: @unchecked Sendable {
 ///
 /// It mirrors the real ABI:
 ///
-///  * `poll`, `cancel` and `complete` only *borrow* the handle
+///  * the handle is the generated `RustFutureHandle` (`UnsafeRawPointer`), and
+///    `poll`, `cancel` and `complete` only *borrow* it
 ///    (`Arc::from_raw` + `mem::forget` in `RustFutureHandleAccess`), while `free`
 ///    *consumes* it (`consume_future`) and is the only call that invalidates it;
-///  * `poll` may invoke the Swift continuation callback synchronously from inside
-///    its own frame - the real runtime does that for a ready future, for a
-///    cancelled one, and from `store_continuation` when it displaces a parked
-///    continuation - and a native wake delivers `MaybeReady` from another thread;
+///  * `RustFuture::poll` invokes the callback from inside its own frame whenever
+///    the future is ready *or cancelled* (`is_cancelled || poll_future_once`, then
+///    `continuation_callback(data, Ready)`), and `rust_future_cancel` delivers
+///    `Ready` to the continuation parked at that moment - so the callback is not
+///    always a wake on another thread;
 ///  * a second poll while a continuation is parked displaces the older one
-///    (`Policy::displaced()` = `Ready`) instead of replacing it silently.
+///    (`RustFutureContinuationPolicy::displaced()` = `Ready`, delivered from inside
+///    `store_continuation` *before* the new continuation is written);
+///  * `wake()` delivers `MaybeReady` from whichever thread woke the future.
 ///
 /// So the model knows whether a native call or a native-delivered callback was on
 /// the stack when `free` ran, which is exactly the difference between "the handle
@@ -56,6 +60,7 @@ final class MockNativeFuture: @unchecked Sendable {
     private let lock = NSLock()
 
     private var freed = false
+    private var cancelled = false
     private var freeCount = 0
     private var pollCount = 0
     private var cancelCount = 0
@@ -87,7 +92,12 @@ final class MockNativeFuture: @unchecked Sendable {
         return future
     }
 
-    var handle: RustFutureHandle? { UnsafeRawPointer(bitPattern: token) }
+    /// `RustFutureHandle` is declared in the generated C module and aliased to
+    /// `UnsafeRawPointer`; the app module does not re-export it, so the probe
+    /// spells the underlying Swift type. It is the same type - the generated
+    /// signature accepts it unchanged - and it keeps this test target free of a
+    /// new module import it may not be able to resolve.
+    var handle: UnsafeRawPointer? { UnsafeRawPointer(bitPattern: token) }
 
     // MARK: - Observations
 
@@ -116,7 +126,7 @@ final class MockNativeFuture: @unchecked Sendable {
     // MARK: - The "native" side
 
     func poll(
-        _ handle: RustFutureHandle?,
+        _ handle: UnsafeRawPointer?,
         _ data: UInt64,
         _ callback: (@convention(c) (UInt64, Int8) -> Void)?
     ) -> Int8 {
@@ -137,7 +147,11 @@ final class MockNativeFuture: @unchecked Sendable {
         }
         pollCount += 1
         let attempt = pollCount
-        let isReady = attempt > readyAfterPolls
+        // `RustFuture::poll` short-circuits a cancelled future to Ready and
+        // invokes the callback inside its own frame; a cancelled future must
+        // therefore never park a new continuation.
+        let wasCancelled = cancelled
+        let isReady = wasCancelled || attempt > readyAfterPolls
         lock.unlock()
 
         if isReady {
@@ -150,6 +164,11 @@ final class MockNativeFuture: @unchecked Sendable {
         // Park, mirroring `store_continuation`.
         lock.lock()
         let displaced = parkedCallback
+        // Each parked continuation carries its own callback *and* its own data
+        // (the generated driver hands the runtime a `passRetained(self)` pointer
+        // per poll), so the displaced pair must be delivered together. Delivering
+        // the new poll's data to the old callback would over-release the driver.
+        let displacedData = parkedData
         if displaced != nil { displacements += 1 }
         parkedCallback = callback
         parkedData = data
@@ -158,10 +177,10 @@ final class MockNativeFuture: @unchecked Sendable {
         lock.unlock()
 
         if let displaced {
-            // The runtime signals the displaced continuation Ready *before* it
-            // stores the new one - the window in which the old code could free the
-            // future that is about to be written to.
-            deliver(displaced, data, .ready)
+            // The runtime signals the displaced continuation with `Policy::displaced()`
+            // = Ready *before* it stores the new one - the window in which the old
+            // code could free the future that is about to be written to.
+            deliver(displaced, displacedData, .ready)
         }
         if wake {
             // A real wake arrives from a native thread, not from this call.
@@ -172,7 +191,7 @@ final class MockNativeFuture: @unchecked Sendable {
         return Signal.maybeReady.rawValue
     }
 
-    func cancel(_ handle: RustFutureHandle?) {
+    func cancel(_ handle: UnsafeRawPointer?) {
         lock.lock()
         nativeDepth += 1
         lock.unlock()
@@ -189,6 +208,9 @@ final class MockNativeFuture: @unchecked Sendable {
             return
         }
         cancelCount += 1
+        // Lifetime latch, not a counter: once cancelled, every later poll reports
+        // Ready from inside its own frame (`wake_target.is_cancelled()`).
+        cancelled = true
         let parked = parkedCallback
         let parkedData = self.parkedData
         parkedCallback = nil
@@ -198,7 +220,7 @@ final class MockNativeFuture: @unchecked Sendable {
         deliver(parked, parkedData, .ready)
     }
 
-    func free(_ handle: RustFutureHandle?) {
+    func free(_ handle: UnsafeRawPointer?) {
         lock.lock()
         if nativeDepth > 0 { violations.append("free inside a native call") }
         if callbackDepth > 0 { violations.append("free inside a native callback") }
@@ -213,7 +235,14 @@ final class MockNativeFuture: @unchecked Sendable {
         lock.unlock()
     }
 
-    func complete(_ handle: RustFutureHandle?, _ status: UnsafeMutablePointer<FfiStatus>?) throws -> UInt32 {
+    /// Called by the completion closure at the call site below.
+    ///
+    /// The status pointer is deliberately not touched: `boltffiAsyncCall` starts
+    /// from `var status = FfiStatus()` (all zeros = `FFI_STATUS_OK`) and reads
+    /// `status.code` back, so leaving it untouched is the success path. That keeps
+    /// `FfiStatus` - another C-module type - out of this file, and it keeps the
+    /// probe about lifetime, not error mapping (the contract suite owns that).
+    func complete(_ handle: UnsafeRawPointer?) -> UInt32 {
         lock.lock()
         nativeDepth += 1
         lock.unlock()
@@ -231,7 +260,6 @@ final class MockNativeFuture: @unchecked Sendable {
         }
         completeCount += 1
         lock.unlock()
-        status?.pointee.code = 0
         return MockNativeFuture.expectedValue
     }
 
@@ -239,6 +267,11 @@ final class MockNativeFuture: @unchecked Sendable {
 
     /// Runs the generated `boltffiAsyncCall` against this model, exactly as a
     /// generated call site would - same parameter types, same wiring.
+    ///
+    /// The completion closure is written inline and its second parameter is left
+    /// unnamed, so its parameter types come from the generated signature instead
+    /// of being spelled here: the app module does not re-export the C types that
+    /// signature names, and a probe that named them would not compile.
     func call() async throws -> UInt32 {
         let futureHandle = handle
         return try await boltffiAsyncCall(
@@ -246,7 +279,7 @@ final class MockNativeFuture: @unchecked Sendable {
             poll: { [self] handle, data, callback in self.poll(handle, data, callback) },
             cancel: { [self] handle in self.cancel(handle) },
             free: { [self] handle in self.free(handle) },
-            complete: { [self] handle, status in try self.complete(handle, status) }
+            complete: { [self] handle, _ in self.complete(handle) }
         )
     }
 
@@ -326,25 +359,52 @@ final class MockNativeFuture: @unchecked Sendable {
         #expect(native.observedViolations.isEmpty)
     }
 
-    @Test func cancellationRacingAWakeNeverPollsAFreedHandle() async throws {
-        // Never ready; one native wake is delivered once the continuation parks, so
-        // the runtime asks for a re-poll exactly while the caller is about to
-        // cancel - the window that reproduced the SIGSEGV on the simulator.
-        let native = MockNativeFuture.make(readyAfterPolls: Int.max, wakeOnceWhenParked: true)
+    @Test func cancellationOfAParkedCallNeverFreesInsideTheNativeFrame() async throws {
+        // Never ready, so the first poll parks a continuation; the caller then
+        // cancels. The runtime answers `rust_future_cancel` by delivering Ready
+        // to that parked continuation *from inside the cancel call*, which is the
+        // frame the old runtime freed the future in - and the continuation it
+        // resumed is the same one the cancellation handler has already claimed.
+        let native = MockNativeFuture.make(readyAfterPolls: Int.max, wakeOnceWhenParked: false)
         let task = Task { try await native.call() }
         await native.waitUntilPolled(atLeast: 1)
         task.cancel()
         let result = await task.result
         await native.settle()
         if case .success = result {
-            // The mock never reports Ready, so a success would mean the runtime
-            // completed a future that never finished.
-            print("BOLT_LIFETIME cancellationRacingAWake=VIOLATION(completed a future that never became ready)")
+            print("BOLT_LIFETIME cancelledCallReturnedAValue=observed")
         }
-        print("BOLT_LIFETIME cancellationRacingAWake=\(native.report) \(native.summary)")
+        print("BOLT_LIFETIME cancellationOfParkedCall=\(native.report) \(native.summary)")
         #expect(native.observedViolations.isEmpty)
         #expect(native.observedFreeCount == 1)
         #expect(native.observedCancelCount >= 1)
+    }
+
+    @Test func wakeDrivenRepollNeverOutlivesTheFree() async throws {
+        // The re-poll path: a native wake arrives once the first poll parked a
+        // continuation, so the runtime asks for another poll. Under the real
+        // policy that second poll displaces the parked continuation with Ready
+        // *from inside the poll frame*, so the old runtime completed and freed
+        // the future while `RustFuture::poll` was still executing.
+        //
+        // The assertions below are lifetime-only. Whether the call completes early
+        // because of the displacement policy is recorded, not asserted: it is
+        // upstream behaviour (`RustFutureContinuationPolicy::displaced()`) and the
+        // real-Rust acceptance suite exercises it against actual native state.
+        let native = MockNativeFuture.make(readyAfterPolls: Int.max, wakeOnceWhenParked: true)
+        let task = Task { try await native.call() }
+        await native.waitUntilPolled(atLeast: 2)
+        let outcome = await task.result
+        if case .success = outcome {
+            print("BOLT_LIFETIME displacement-completed-a-pending-future=observed(upstream policy)")
+        }
+        task.cancel()
+        _ = await task.result
+        await native.settle()
+        print("BOLT_LIFETIME wakeDrivenRepoll=\(native.report) \(native.summary)")
+        #expect(native.observedViolations.isEmpty)
+        #expect(native.observedFreeCount == 1)
+        #expect(native.observedPollCount >= 2)
     }
 
     @Test func repeatedAndPreCancelledCallsFreeExactlyOnce() async throws {
