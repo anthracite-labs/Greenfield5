@@ -8,6 +8,16 @@
 #
 # Usage: swift-typecheck.sh SPIKE_DIR LABEL
 # Exit status is swiftc's. Log: SPIKE_DIR/typecheck-LABEL.log
+#
+# `-parse-as-library` matters: without it swiftc treats the first generated file as
+# top-level code, where Swift 6 isolates top-level declarations to the main actor -
+# and then the two `private let boltffi...PollCallback` globals are reported as
+# "main actor-isolated ... can not be referenced from a nonisolated context", which
+# the app's own Swift 6 build does not report (apps/ios: SWIFT_VERSION = 6.0, and
+# the app compiles this same file). Those two diagnostics are an artifact of the
+# probe's invocation, not a property of the generated code, and they also confounded
+# the differential experiment: the parameters-only variant failed on them instead of
+# on the Sendable diagnostic it exists to test.
 set -euo pipefail
 
 SPIKE_DIR="$(cd -- "${1:?usage: swift-typecheck.sh SPIKE_DIR LABEL}" && pwd)"
@@ -56,6 +66,7 @@ set +e
 xcrun --sdk iphonesimulator swiftc \
   -typecheck \
   -swift-version 6 \
+  -parse-as-library \
   -target arm64-apple-ios16.0-simulator \
   -sdk "$sdk_path" \
   -I "$headers_dir" \

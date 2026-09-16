@@ -332,29 +332,37 @@ jobs:
         if: always()
         run: |
           python3 - <<'PY'
-          import pathlib, re
-          parts = []
-          for name in ("release-contract.log", "debug-contract.log", "release-close.log",
-                       "debug-close.log", "emulator.log", "red-release-close.log",
-                       "red-debug-close.log", "native-proof.log", "green-generation.log",
-                       "red-generation.log"):
+          import pathlib
+
+          def encode(lines):
+              """One annotation body: %25-escaped, %0A-joined, capped per log."""
+              return "%0A".join(ln.replace("%", "%25") for ln in lines)
+
+          # One notice per log. The single concatenated notice this replaces kept only
+          # its last ~900 characters, which cut off exactly the files that carried the
+          # failure (run 35108329894: the close-race logs and the contract markers).
+          logs = [
+              "debug-contract.log", "debug-close.log", "release-contract.log",
+              "release-close.log", "red-debug-close.log", "red-release-close.log",
+              "native-proof.log", "emulator.log", "green-generation.log", "red-generation.log",
+          ]
+          keys = ("BOLT_", "OK (1 test)", "FAILURES", "INSTRUMENTATION_", "ANDROID_",
+                  "error:", "ERROR", "PANIC", "Exception", "Use after free", "SIGSEGV",
+                  "Unknown AVD", "ANDROID_NATIVE_PROOF")
+          missing = []
+          for name in logs:
               path = pathlib.Path("spikes/boltffi-retest") / name
               if not path.exists():
                   path = pathlib.Path(name)
               if not path.exists():
-                  parts.append(f"[{name}: MISSING]")
+                  missing.append(name)
                   continue
-              data = path.read_text(errors="replace")
-              keep = [ln for ln in data.splitlines()
-                      if any(k in ln for k in ("BOLT_", "OK (1 test)", "FAILURES", "INSTRUMENTATION_",
-                                               "ANDROID_", "error:", "ERROR", "PANIC", "Exception",
-                                               "Use after free", "SIGSEGV", "Unknown AVD"))]
-              parts.append(f"[{name}]\n" + "\n".join(keep[-40:]))
-          text = "\n".join(parts)[-2400:]
-          text = text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
-          print("::notice title=BoltFFI candidate Android result::" + text)
+              data = path.read_text(errors="replace").splitlines()
+              keep = [ln for ln in data if any(k in ln for k in keys)] or data[-10:]
+              print("::notice title=BoltFFI Android " + name + "::" + encode(keep[-14:])[:900])
+          if missing:
+              print("::notice title=BoltFFI Android logs missing::" + ", ".join(missing))
           PY
-
   candidate-apple:
     name: BoltFFI candidate Apple
     runs-on: macos-15
@@ -537,13 +545,22 @@ jobs:
               problems.append("generated call site does not constrain the completion value to Sendable")
           if "BoltFFIFutureLifetime" not in text:
               problems.append("generated runtime has no BoltFFIFutureLifetime owner (patch 0004 missing)")
-          free_sites = text.count("freeHandle(owner.handle)")
+          if "func freeOnQueue()" not in text:
+              problems.append("the handle owner has no queue-confined, idempotent free")
+          free_sites = text.count("freeHandle(handle)")
           if free_sites != 1:
-              problems.append(f"{free_sites} freeHandle(owner.handle) call sites, expected exactly 1, in deinit")
-          for stray in ("free(futureHandle)", "free(state.handle)", "free(lifetime.handle)"):
+              problems.append(f"{free_sites} freeHandle(handle) call sites, expected exactly 1, inside Owner.freeOnQueue")
+          free_callers = text.count("owner.freeOnQueue()")
+          if free_callers != 2:
+              problems.append(f"{free_callers} owner.freeOnQueue() call sites, expected 2 (terminal step + deinit)")
+          if "func terminal(" not in text:
+              problems.append("the runtime has no terminal free-then-resume step")
+          for stray in ("free(futureHandle)", "free(state.handle)", "free(lifetime.handle)",
+                        "freeHandle(owner.handle)"):
               if stray in text:
                   problems.append(f"the generated runtime still frees the handle directly via {stray}")
-          for required in ("DispatchQueue(label: \"boltffi.async.future\")", "queue.async(execute: body)"):
+          for required in ("DispatchQueue(label: \"boltffi.async.future\")", "queue.async(execute: body)",
+                           "lifetime.terminal(cancel: cancel)"):
               if required not in text:
                   problems.append(f"generated runtime is missing {required}")
           if "deinit {" not in text:
@@ -553,9 +570,24 @@ jobs:
               sys.exit(1)
           emit("notice", "BoltFFI GREEN generator",
                "patched v0.30.1 generated Swift: cancel/free are @escaping @Sendable, the completion value is "
-               "constrained with T: Sendable, and the raw future handle is owned by BoltFFIFutureLifetime, whose "
-               "single deinit performs the only free.")
+               "constrained with T: Sendable, and the raw future handle is owned by BoltFFIFutureLifetime, which "
+               "cancels, frees and only then resumes the caller - the free runs on the call's own queue, behind "
+               "every native call, exactly once (Owner.freeOnQueue).")
           PY
+          # The Swift 6 pair has to run on the same basis for both sides: the RED is
+          # `swift-typecheck.sh ... unpatched`, so the GREEN is the same probe on the
+          # patched output. Without this the pair was half-executed - the RED proved
+          # the defect while the patched tree was only ever checked by text
+          # assertions and by an app build that does not report the probe's own
+          # invocation artifacts. A failure here is a candidate result, not a
+          # harness defect: publish the compiler output and fail closed.
+          bash spikes/boltffi-retest/scripts/swift-typecheck.sh spikes/boltffi-retest patched \
+            >green-typecheck.log 2>&1 || {
+            msg="$(tail -n 25 green-typecheck.log | sed 's/%/%25/g' | awk '{printf "%s%%0A", $0}' | tail -c 900)"
+            echo "::error title=BoltFFI Swift 6 GREEN failed::${msg}"
+            exit 1
+          }
+          grep -E "SWIFT_TYPECHECK_(FILE|patched_EXIT)" green-typecheck.log
           cp -R spikes/boltffi-retest/generated spikes/boltffi-retest/generated-patched
 
       - name: Lifetime GREEN - the patched runtime keeps the future alive
@@ -593,21 +625,24 @@ jobs:
           cp -R generated-unpatched generated
           python3 - <<'PY'
           import pathlib, sys
-          pairs = [
-              ("    cancel: @escaping (RustFutureHandle?) -> Void,\n",
-               "    cancel: @escaping @Sendable (RustFutureHandle?) -> Void,\n"),
-              ("    free: @escaping (RustFutureHandle?) -> Void,\n",
-               "    free: @escaping @Sendable (RustFutureHandle?) -> Void,\n"),
-          ]
+          # Patched runtime with one token removed: is `T: Sendable` load-bearing on
+          # top of the two @Sendable annotations, or is the constraint defensive?
+          # The earlier form of this probe started from the *unpatched* tree, so it
+          # also hit the probe's own top-level-code isolation artifacts and could not
+          # attribute its failure. Starting from the patched tree isolates the token.
+          target = "func boltffiAsyncCall<T: Sendable>("
           files = sorted(pathlib.Path("generated").rglob("*.swift"))
           if not files:
               sys.exit("no generated Swift for the differential probe")
+          hits = 0
           for path in files:
               text = path.read_text()
-              for old, new in pairs:
-                  text = text.replace(old, new)
-              path.write_text(text)
-          print("::notice title=BoltFFI differential::parameters-only variant prepared: cancel/free are @Sendable but the completion value is not constrained to Sendable.")
+              if target in text:
+                  path.write_text(text.replace(target, "func boltffiAsyncCall<T>("))
+                  hits += 1
+          if hits != 1:
+              sys.exit(f"expected exactly one boltffiAsyncCall declaration, found {hits}")
+          print("::notice title=BoltFFI differential::patched runtime with `T: Sendable` removed from boltffiAsyncCall; everything else identical.")
           PY
           cd - >/dev/null
           set +e
@@ -620,9 +655,11 @@ jobs:
           status = int(sys.argv[1])
           lines = open("differential.log", errors="replace").read().splitlines()
           evidence = [ln for ln in lines if "error:" in ln][:6]
-          body = (f"cancel/free @Sendable WITHOUT T: Sendable -> swiftc exit {status}; "
-                  + ("the constraint is still required\n" if status != 0 else "the constraint is NOT required\n")
-                  + "\n".join(evidence))
+          body = (f"patched runtime WITHOUT `T: Sendable` -> swiftc exit {status}; "
+                  + ("the constraint is load-bearing - the generated call site does not compile without it"
+                     if status != 0 else
+                     "the constraint is NOT required at this pin, so patch 0001 must be narrowed to the two @Sendable annotations")
+                  + "\n" + "\n".join(evidence))
           body = body.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")[:900]
           print("::notice title=BoltFFI differential (params only)::" + body)
           PY
@@ -758,10 +795,14 @@ jobs:
           # 2400 characters of the concatenation and silently hid exactly the file
           # that had failed.
           logs = [
-              "lifetime-green.log", "spikes/boltffi-retest/test.log", "xcode-test.log",
+              "lifetime-green.log", "xcode-test.log", "green-typecheck.log",
+              "spikes/boltffi-retest/apple-test.log", "spikes/boltffi-retest/apple-test-build.log",
+              "spikes/boltffi-retest/apple-lifetime.log",
+              "spikes/boltffi-retest/apple-lifetime-build.log",
               "red-typecheck.log", "lifetime-red.log", "green-generation.log",
               "red-generation.log", "differential.log", "sendable-probe.log",
               "spikes/boltffi-retest/typecheck-unpatched.log",
+              "spikes/boltffi-retest/typecheck-patched.log",
               "spikes/boltffi-retest/sendable-probe/typecheck-class-returning.log",
           ]
           pattern = (r"BOLT_|Executed [0-9]+ test|OK \(1 test\)|error:|VIOLATION|"

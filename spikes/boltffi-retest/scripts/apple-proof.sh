@@ -37,6 +37,11 @@ SPIKE_DIR="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd -- "$SPIKE_DIR/../.." && pwd)"
 readonly SCRIPT_DIR SPIKE_DIR REPO_ROOT
 readonly RUN_BOUNDED="${SCRIPT_DIR}/run-with-timeout.py"
+# One log per mode: this script runs twice in the same job (the RED/GREEN lifetime
+# probe, then the acceptance run), and a shared log file made the earlier run's
+# output readable as the later run's result.
+readonly BUILD_LOG="${SCRIPT_DIR}/../apple-${MODE}-build.log"
+readonly TEST_LOG="${SCRIPT_DIR}/../apple-${MODE}.log"
 
 cd -- "$SPIKE_DIR"
 
@@ -108,48 +113,50 @@ base=(xcodebuild -project Greenfield5.xcodeproj -scheme Greenfield5
 echo "---- generated public API surface ----"
 grep -hE '^(public|@_|extension)' "${generated_sources[@]}" | sort -u | head -n 200
 
+echo "APPLE_BUILD_LOG=${BUILD_LOG}"
+echo "APPLE_TEST_LOG=${TEST_LOG}"
 set +e
-( cd -- "$APP_DIR" && python3 "$RUN_BOUNDED" 420 "${SPIKE_DIR}/build.log" "${base[@]}" build )
+( cd -- "$APP_DIR" && python3 "$RUN_BOUNDED" 420 "$BUILD_LOG" "${base[@]}" build )
 build_status=$?
 set -e
 echo "APPLE_TEST_BUILD_EXIT=${build_status}"
-tail -n 20 build.log || true
+tail -n 20 "$BUILD_LOG" || true
 if [ "$build_status" -ne 0 ]; then
   # The whole point of a bounded, self-announcing proof: a compile failure must
   # print its diagnostics here instead of leaving a bare exit code behind.
   echo "---- build diagnostics ----"
-  grep -E "error:" build.log | head -n 60 || true
+  grep -E "error:" "$BUILD_LOG" | head -n 60 || true
   exit "$build_status"
 fi
 
 set +e
-( cd -- "$APP_DIR" && python3 "$RUN_BOUNDED" 600 "${SPIKE_DIR}/test.log" "${base[@]}" test \
+( cd -- "$APP_DIR" && python3 "$RUN_BOUNDED" 600 "$TEST_LOG" "${base[@]}" test \
   -parallel-testing-enabled NO -maximum-test-execution-time-allowance 90 -test-timeouts-enabled YES )
 test_status=$?
 set -e
 echo "APPLE_TEST_EXIT=${test_status}"
-tail -n 60 test.log
-grep -E '\*\* TEST (SUCCEEDED|FAILED) \*\*|Executed [0-9]+ test|Test run with [0-9]+ test|Test Case .* (passed|failed)' test.log | tail -n 30 || true
+tail -n 60 "$TEST_LOG"
+grep -E '\*\* TEST (SUCCEEDED|FAILED) \*\*|Executed [0-9]+ test|Test run with [0-9]+ test|Test Case .* (passed|failed)' "$TEST_LOG" | tail -n 30 || true
 if [ "$test_status" -ne 0 ]; then
   echo "---- test diagnostics ----"
-  grep -E "error:|XCTAssert|recorded an issue|failed" test.log | tail -n 60 || true
+  grep -E "error:|XCTAssert|recorded an issue|failed" "$TEST_LOG" | tail -n 60 || true
   exit "$test_status"
 fi
 
-grep -q '\*\* TEST SUCCEEDED \*\*' test.log
-grep -q 'BOLT_LIFETIME' test.log
+grep -q '\*\* TEST SUCCEEDED \*\*' "$TEST_LOG"
+grep -q 'BOLT_LIFETIME' "$TEST_LOG"
 if [ "$MODE" = "test" ]; then
   # The real-Rust acceptance markers. In lifetime mode the probe only needs the
   # generated runtime, so these are asserted by the acceptance run instead.
-  grep -q 'BOLT_PROOF version=0.1.0' test.log
-  grep -q 'BOLT_BACKLOG' test.log
-  grep -E "BOLT_PROOF|BOLT_ERR|BOLT_BACKLOG|BOLT_BOUNDED|BOLT_CANCEL|BOLT_LIFETIME" test.log | tail -n 20 || true
+  grep -q 'BOLT_PROOF version=0.1.0' "$TEST_LOG"
+  grep -q 'BOLT_BACKLOG' "$TEST_LOG"
+  grep -E "BOLT_PROOF|BOLT_ERR|BOLT_BACKLOG|BOLT_BOUNDED|BOLT_CANCEL|BOLT_LIFETIME" "$TEST_LOG" | tail -n 20 || true
 fi
 # XCTest reports "Executed N tests"; swift-testing reports "Test run with N
 # tests passed". Require one of the two counts, so "TEST SUCCEEDED" alone can
 # never be mistaken for "tests actually ran".
-if ! grep -qE 'Executed [0-9]+ tests?' test.log &&
-  ! grep -qE 'Test run with [0-9]+ tests? passed' test.log; then
+if ! grep -qE 'Executed [0-9]+ tests?' "$TEST_LOG" &&
+  ! grep -qE 'Test run with [0-9]+ tests? passed' "$TEST_LOG"; then
   echo "xcodebuild reported success but no executed-test count was found; refusing to call that a pass" >&2
   exit 1
 fi

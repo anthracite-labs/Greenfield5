@@ -237,10 +237,18 @@ run_phase() {
   echo "ANDROID_${upper}_TEST_APK=$(basename -- "$test_apk") bytes=$(wc -c <"$test_apk" | tr -d ' ') sha256=$(sha256sum -- "$test_apk" | cut -d' ' -f1)"
 
   install_and_run "${upper}_CONTRACT" "NativeContractTest" 300 "${variant}-contract.log" "$app_apk" "$test_apk"
-  grep -q 'BOLT_PROOF version=0.1.0' "${LOG_PREFIX}${variant}-contract.log"
-  grep -E 'BOLT_PROOF|BOLT_STREAM' "${LOG_PREFIX}${variant}-contract.log" || true
-  grep -E 'BOLT_PROOF|BOLT_STREAM' "${LOG_PREFIX}${upper}_CONTRACT-logcat.txt" || true
-  grep -q 'BOLT_STREAM' "${LOG_PREFIX}${variant}-contract.log" "${LOG_PREFIX}${upper}_CONTRACT-logcat.txt"
+  # The suite's markers are `println` output from the test process, which Android
+  # routes to logcat (`System.out`), not to the `am instrument` protocol stream:
+  # run 35108329894 built, installed and *passed* NativeContractTest on the
+  # emulator ("OK (1 test)", ANDROID_DEBUG_CONTRACT=PASS) and then died on this
+  # grep, because it only looked at the runner's own output. Both files are
+  # checked, and the marker is echoed so the evidence shows where it came from.
+  grep -q 'BOLT_PROOF version=0.1.0' \
+    "${LOG_PREFIX}${variant}-contract.log" "${LOG_PREFIX}${upper}_CONTRACT-logcat.txt"
+  grep -hE 'BOLT_PROOF|BOLT_STREAM' \
+    "${LOG_PREFIX}${variant}-contract.log" "${LOG_PREFIX}${upper}_CONTRACT-logcat.txt" || true
+  grep -q 'BOLT_STREAM' \
+    "${LOG_PREFIX}${variant}-contract.log" "${LOG_PREFIX}${upper}_CONTRACT-logcat.txt"
 
   install_and_run "${upper}_CLOSE" "ConcurrentCloseTest" 300 "${variant}-close.log" "$app_apk" "$test_apk"
   grep -q 'BOLT_CLOSE' "${LOG_PREFIX}${variant}-close.log" "${LOG_PREFIX}${upper}_CLOSE-logcat.txt"

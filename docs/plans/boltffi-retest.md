@@ -187,12 +187,176 @@ run. Patch 0004's owner is what enforces that, and
 `host/LifetimeProbe.swift` asserts it against a model of the contract
 (borrowed poll/cancel/complete, consuming free) rather than against a hope.
 
+### Patch 0004 v3 - free before resume (2026-09-16)
+
+The invariant is now stated in one line, and each clause is executable:
+
+1. `rust_future_free(handle)` happens **exactly once** per call -
+   `Owner.freeOnQueue()` is queue-confined and idempotent, and the lifetime's
+   `deinit` is only a last chance to call it.
+2. It never runs while anything can still dereference the handle - the free is
+   queued behind every poll and cancel on the call's serial `DispatchQueue`, so it
+   cannot execute inside `RustFuture::poll`, inside a displaced-continuation
+   delivery, or inside the callback the runtime makes into the module.
+3. It runs **before the caller is resumed** - `terminal(cancel:then:)` frees and
+   then resumes, on the success/error-status path and on the cancellation path, so
+   a native future cannot outlive the call that created it and a caller that reads
+   its native state right after the call cannot race a live future.
+
+The one path that keeps the deferred form is a *thrown* error from the generated
+completion closure: `Error` is not `Sendable`, and boxing it would be the
+`@unchecked Sendable` escape this candidate refuses, so that path resumes from the
+poll frame and lets `deinit` release the handle - still exactly once, still never
+inside a native frame. It is recorded, not hidden.
+
 ## Evidence log (executed, newest first)
 
 Every entry is an executed CI run of `.github/workflows/boltffi-retest.yml` on
 this branch. Raw job logs are not retrievable from the sandbox, so each step also
 publishes annotations (`::notice` / `::error`); those annotations, plus the
 artifact set, are what is quoted here.
+
+**Run `35108329894` (head `c260caf`) - both RED/GREEN pairs executed; one real
+candidate difference found, in the cancellation path.**
+
+Jobs: Rust `104835220621` **success**; Apple `104835220552` **failure**; Android
+`104835220328` **failure**.
+
+*Swift 6 pair, executed.* RED (unpatched v0.30.1, standalone probe):
+`-swift-version 6` exits 1 at `Greenfield5BoltSpikeBoltFFI.swift:702:13` and
+`703:13` - "capture of 'cancel'/'free' with non-sendable type
+`(RustFutureHandle?) -> Void` ... in a '@Sendable' closure". GREEN-side text
+assertions pass on the patched generator (cancel/free `@escaping @Sendable`, the
+completion value constrained with `T: Sendable`, one `BoltFFIFutureLifetime`).
+
+*Lifetime pair, executed against a real Xcode test target.* RED (pre-0004 runtime,
+`--exclude 0004`):
+
+```
+BOLT_LIFETIME completionInsidePollFrame=VIOLATION(free inside a native call; free inside a native callback) free-once=true polls=1 completes=1 frees=1
+BOLT_LIFETIME wakeDrivenRepoll=VIOLATION(free inside a native call; free inside a native callback) polls=2 displacements=1 ... violations=2
+```
+
+GREEN (patched runtime, same probe):
+
+```
+BOLT_LIFETIME completionInsidePollFrame=clean free-once=true polls=1 completes=1 frees=1 violations=0
+BOLT_LIFETIME cancellationOfParkedCall=clean polls=1 cancels=1 frees=1 violations=0
+BOLT_LIFETIME wakeDrivenRepoll=clean polls=2 completes=1 frees=1 displacements=1 violations=0
+BOLT_LIFETIME repeatedCancellation=clean ... preCancelled=clean ...
+```
+
+*The native acceptance run executed* (`apple-proof.sh test`, 19 tests over the
+real Rust library): the mocked lifetime suite passed; **the only failures were the
+two real-Rust cancellation tests** - `BoltOwnership.repeatedCancellation` with 45
+issues and `cancellationRacingReadiness` with 4, every one of them
+`Expectation failed: (probe.active() -> 1) == 0`.
+Diagnosis, from the runtime source rather than from the test: `RustFuture::cancel`
+only marks the continuation scheduler cancelled; the `Arc<RustFuture>` - and with
+it the async body and its `active` guard - is dropped by `rust_future_free`
+(`consume_future`). Patch 0004 v2 deferred the free to the lifetime's `deinit`,
+which is *safe* but asynchronous: the caller could be resumed before the free ran,
+so a native future could outlive the call that created it. That is a real
+observable difference, not a test artifact, and it is now fixed in the candidate
+rather than accommodated in the test - see "Patch 0004 v3" below.
+
+*Harness defects fixed in this commit (all three hid or mis-attributed evidence):*
+  1. `run-with-timeout.py` opened logs in **append** mode, so the final
+     `spikes/boltffi-retest/test.log` held the *lifetime RED* run's violations and
+     the GREEN run's clean lines in one file - a diagnostics step could publish a
+     violation from the unpatched runtime as if it came from the patched one. Logs
+     are now truncated per invocation, and `apple-proof.sh` writes per-mode logs
+     (`apple-test.log`, `apple-lifetime.log`, plus matching build logs).
+  2. The differential probe started from the *unpatched* tree, so it also failed
+     on artifacts of the probe's own invocation and could not attribute its
+     failure. It now starts from the patched tree and removes only
+     `: Sendable` from `boltffiAsyncCall`, which isolates the token.
+  3. The standalone probe compiled the generated file as top-level code, where
+     Swift 6 isolates top-level declarations to the main actor, reporting
+     "main actor-isolated let 'boltffiAsyncPollCallback' can not be referenced from
+     a nonisolated context" (and the same for the stream callback) - diagnostics the
+     app's own Swift 6 build (`SWIFT_VERSION = 6.0`) does not produce. The probe now
+     passes `-parse-as-library`, and a **Swift 6 GREEN typecheck** was added to the
+     patched-generation step so the pair is executed on both sides instead of only
+     being asserted as text.
+
+*Android, real JNI execution for the first time.* KVM is usable on this runner
+(`ANDROID_KVM_PRESENT=yes`, udev rule, `ANDROID_ACCEL=usable`,
+`ANDROID_BOOT_COMPLETED after 20s`); the debug app and instrumentation APKs built,
+installed and ran the real contract suite through Kotlin -> generated bindings ->
+JNI -> Rust: `dev.greenfield5.boltproof.NativeContractTest: OK (1 test)`,
+`ANDROID_DEBUG_CONTRACT=PASS`. The job then failed on the *next* command, a marker
+grep: Android routes the test process's `println` to logcat (`System.out`), not to
+the `am instrument` protocol stream, so `BOLT_PROOF` was in `DEBUG_CONTRACT-logcat.txt`
+and not in `debug-contract.log`. The close-race suite is therefore
+**NOT EXECUTED** in this run - recorded as such, not as a pass. The marker greps now
+read both files, and the Android diagnostics publish one notice per log (the single
+concatenated notice had truncated away exactly the close-race logs).
+
+
+**Run `35102072270` (head `628a614`) - both REDs reproduced for real; GREEN skipped
+by a harness defect.**
+
+Jobs: Rust `104813721854` **success**; Apple `104813721788` **failure**; Android
+`104813721353` **failure**. (Earlier in this session the run for head `63ad133`,
+run `35100417583`: Rust success, Apple `104808136376` failure, Android
+`104808136519` failure - Apple's lifetime probe did not compile because
+`RustFutureHandle`/`FfiStatus` are C-module types the app module does not
+re-export; fixed in `628a614` by spelling `UnsafeRawPointer` and taking the
+completion closure's parameter types from the generated signature.)
+
+*Swift 6 RED, executed* - `swift-typecheck.sh` found the generated Swift at
+`generated/apple/Sources/BoltFFI/Greenfield5BoltSpikeBoltFFI.swift` (modulemap
+`generated/apple/BoltSpike.xcframework/ios-arm64-simulator/Headers/module.modulemap`)
+and `-swift-version 6` rejected it with exit 1:
+`702:13: error: capture of 'cancel' with non-sendable type '(RustFutureHandle?) -> Void' ... in a '@Sendable' closure`,
+`703:13: error: capture of 'free' with ...` plus
+`629:13 main actor-isolated let 'boltffiAsyncPollCallback' can not be referenced from a nonisolated context`
+and `804:34` for the stream poll callback. This is the first time the RED probe
+compiled anything: every earlier attempt died in the harness.
+
+*Lifetime RED, executed* (pre-0004 runtime built by `--exclude 0004`, driven by
+the real Xcode test target on a simulator):
+
+```
+BOLT_LIFETIME completionInsidePollFrame=VIOLATION(free inside a native call; free inside a native callback) free-once=true polls=1 cancels=0 completes=1 frees=1 displacements=0 violations=2
+BOLT_LIFETIME cancellationOfParkedCall=clean polls=1 cancels=1 completes=0 frees=1 displacements=0 violations=0
+BOLT_LIFETIME displacement-completed-a-pending-future=observed(upstream policy)
+BOLT_LIFETIME wakeDrivenRepoll=VIOLATION(free inside a native call; free inside a native callback) polls=2 cancels=0 completes=1 frees=1 displacements=1 violations=2
+BOLT_LIFETIME preCancelled=clean polls=0 cancels=1 completes=0 frees=1 displacements=0 violations=0
+Test run with 8 tests failed after 9.385 seconds with 2 issues.
+```
+
+  Two independent mechanisms are now measured, not argued: (a) the completion
+  path frees the future **while the runtime is still inside `RustFuture::poll`**
+  (`free inside a native call` + `free inside a native callback` on the very first
+  poll), and (b) the wake-driven re-poll path displaces the parked continuation
+  (`displacements=1`), the displaced delivery completes the call from inside the
+  poll frame, and the free lands there too. Mechanism (b) is the one the SIGSEGV
+  in run `35092248876` came from.
+*Harness defect that cost this run its GREEN phase*: the Lifetime RED step wraps
+the probe in a function that re-enables `set -e` (for fail-fast inside the chain),
+and shell options are global - so the probe's `xcodebuild` exit 65 killed the step
+before the assertion could publish the violation it had already written to
+`lifetime-red.log`. GREEN generation, lifetime GREEN, the differential probe, the
+restore and the whole native run were therefore **skipped**, and the restore guard
+correctly failed closed ("generated-patched holds no generated Swift"). Fixed by
+running the probe in a subshell.
+*Android*: unpatched baseline RED is recorded (provenance `BOLTFFI_PATCHED=no`,
+`BOLTFFI_DIFFSTAT= 0 files changed`; GREEN provenance carries the in-flight counter
+and the receiver retain), KVM prep works on this runner
+(`ANDROID_KVM_PRESENT=yes`, `ANDROID_KVM_NOT_WRITABLE=yes` -> udev rule ->
+`READABLE/WRITABLE=yes`, `ANDROID_ACCEL=usable`, `ANDROID_BOOT_COMPLETED after
+20s`), but **no native execution happened**: the instrumentation APK failed to
+compile - `Unresolved reference 'eventsBatch' on receiver of type 'EventProbe'` -
+because the generated Kotlin exposes stream accessors as extension functions and
+Kotlin needs an explicit import for them. Fixed by importing
+`dev.greenfield5.bolt.eventsBatch`. The close-race RED probe is consequently
+"NOT EXECUTED", never PASS.
+*Diagnostics*: the per-log notices added in `628a614` published the violation, the
+Kotlin compiler error and the Android RED-probe result from this one run, where the
+previous single concatenated notice had truncated away exactly the failing file.
+
 
 **Run `35098039373` (head `580e425`, patch 0004 first execution) - two harness
 defects, no candidate result yet.**
