@@ -7,8 +7,13 @@ import org.junit.runner.RunWith
 import dev.greenfield5.bolt.AsyncProbe
 import dev.greenfield5.bolt.EventProbe
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.startCoroutine
 
 // Runs in its own instrumentation invocation after the contract test, so a
 // crash here cannot destroy the contract evidence. A crash is evidence, not
@@ -56,11 +61,28 @@ class ConcurrentCloseTest {
         repeat(200) {
             val probe = AsyncProbe()
             val failed = AtomicReference<Throwable?>()
+            val settled = CountDownLatch(1)
             val worker = Thread {
-                try { probe.waitValue(3u, false) }
-                catch (expected: IllegalStateException) { rejected.incrementAndGet() }
-                catch (error: Throwable) { failed.set(error) }
+                // The generated API is `suspend`, and the KVM-free phase of this
+                // test must not need a coroutine library on the instrumentation
+                // classpath: stdlib startCoroutine runs the block on this thread
+                // until it suspends, then resumes it on whichever thread the
+                // native completion arrives on - the same shape as a real caller.
+                val call: suspend () -> UInt = { probe.waitValue(3u, false) }
+                call.startCoroutine(object : Continuation<UInt> {
+                    override val context: CoroutineContext = EmptyCoroutineContext
+                    override fun resumeWith(result: Result<UInt>) {
+                        val error = result.exceptionOrNull()
+                        when {
+                            error is IllegalStateException -> rejected.incrementAndGet()
+                            error != null -> failed.set(error)
+                        }
+                        settled.countDown()
+                    }
+                })
+                check(settled.await(5, TimeUnit.SECONDS)) { "async call never settled" }
             }
+            worker.setUncaughtExceptionHandler { _, error -> failed.set(error) }
             worker.start()
             awaitActive(probe, 1u)
             probe.close()

@@ -10,9 +10,12 @@
 # Exit status is swiftc's. Log: SPIKE_DIR/typecheck-LABEL.log
 set -euo pipefail
 
-SPIKE_DIR="${1:?usage: swift-typecheck.sh SPIKE_DIR LABEL}"
+SPIKE_DIR="$(cd -- "${1:?usage: swift-typecheck.sh SPIKE_DIR LABEL}" && pwd)"
 LABEL="${2:?usage: swift-typecheck.sh SPIKE_DIR LABEL}"
 readonly SPIKE_DIR LABEL
+# Absolute on purpose: the compile is redirected into LOG *after* cd'ing into
+# SPIKE_DIR, so a relative LOG made the redirect itself fail - which silently
+# skipped swiftc and reported "RED failed for the wrong reason" (run 35099091021).
 readonly LOG="${SPIKE_DIR}/typecheck-${LABEL}.log"
 
 cd -- "$SPIKE_DIR"
